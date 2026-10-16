@@ -1,12 +1,12 @@
-/* PII v1 con estilo Banamex. Vanilla JS, sin dependencias.
-   1. CONFIG  2. HELPERS  3. STATE  4. API  5. RENDER  6. INSPECT  7. BOOT */
-"use strict";
-
 const API = { process: "process_table" };
 
 function apiUrl(path) {
   if (typeof getWebAppBackendUrl === "function") {
-    try { return getWebAppBackendUrl(path); } catch { return path; }
+    try {
+      return getWebAppBackendUrl(path);
+    } catch {
+      return path;
+    }
   }
   return path;
 }
@@ -21,20 +21,34 @@ function escapeHtml(s) {
 const pctText = (p) => (Number(p || 0) * 100).toFixed(2) + "%";
 
 const ALL = "__all";
-const state = { columns: [], busy: false, filter: "", onlyPii: false, activeFile: ALL, entity: "" };
+const state = {
+  columns: [],
+  busy: false,
+  filter: "",
+  onlyPii: false,
+  activeFile: ALL,
+  entity: "",
+};
 
 async function apiProcess(formData) {
-  const res = await fetch(apiUrl(API.process), { method: "POST", body: formData });
+  const res = await fetch(apiUrl(API.process), {
+    method: "POST",
+    body: formData,
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.status !== "success") {
-    throw new Error(data.message || ("HTTP " + res.status + " en " + API.process));
+    throw new Error(
+      data.message || "HTTP " + res.status + " en " + API.process,
+    );
   }
   return data;
 }
 
 function getFiles() {
   const s = new Set(state.columns.map((c) => c.source_file || ""));
-  return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b, "es"));
+  return Array.from(s)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
 }
 const isMulti = () => getFiles().length > 1;
 const isIndexView = () => isMulti() && state.activeFile === ALL;
@@ -45,10 +59,30 @@ function getEntities() {
   return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
 }
 
+function tableScopeFile() {
+  if (state.activeFile !== ALL) return state.activeFile;
+  const files = getFiles();
+  if (files.length === 1) return files[0];
+  return null;
+}
+
+function getEntitiesForScope() {
+  const scope = tableScopeFile();
+  const s = new Set();
+  for (const c of state.columns) {
+    if (scope && (c.source_file || "") !== scope) continue;
+    if (c.is_pii && c.entity) s.add(c.entity);
+  }
+  return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
+}
+
 function topEntities(cols, n = 2) {
   const m = new Map();
-  for (const c of cols) if (c.is_pii && c.entity) m.set(c.entity, (m.get(c.entity) || 0) + 1);
-  return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, n);
+  for (const c of cols)
+    if (c.is_pii && c.entity) m.set(c.entity, (m.get(c.entity) || 0) + 1);
+  return Array.from(m.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n);
 }
 
 function fileSummary(file) {
@@ -61,12 +95,16 @@ function fileSummary(file) {
 function visibleColumns() {
   const q = state.filter.trim().toLowerCase();
   return state.columns.filter((c) => {
-    if (state.activeFile !== ALL && (c.source_file || "") !== state.activeFile) return false;
+    if (state.activeFile !== ALL && (c.source_file || "") !== state.activeFile)
+      return false;
     if (state.onlyPii && !c.is_pii) return false;
     if (state.entity && (c.entity || "") !== state.entity) return false;
     if (!q) return true;
     return [c.source_file, c.name, c.entity].some((v) =>
-      String(v ?? "").toLowerCase().includes(q));
+      String(v ?? "")
+        .toLowerCase()
+        .includes(q),
+    );
   });
 }
 
@@ -78,7 +116,11 @@ function renderMeta() {
 
 function renderKPIs() {
   const el = $("#kpiStrip");
-  if (!isIndexView()) { el.hidden = true; el.textContent = ""; return; }
+  if (!isIndexView()) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
   const total = state.columns.length;
   const pii = state.columns.filter((c) => c.is_pii).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
@@ -94,8 +136,16 @@ function renderKPIs() {
 
 function renderTabs() {
   const el = $("#fileTabs");
-  if (!isMulti() && !(state.columns.length && getFiles().length)) { el.hidden = true; el.textContent = ""; return; }
-  if (!isMulti()) { el.hidden = true; el.textContent = ""; return; }
+  if (!isMulti() && !(state.columns.length && getFiles().length)) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  if (!isMulti()) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
   el.hidden = false;
   el.textContent = "";
   const mkTab = (key, label, sub) => {
@@ -118,12 +168,26 @@ function renderTabs() {
 
 function renderIndex() {
   const el = $("#indexGrid");
-  if (!isIndexView()) { el.hidden = true; el.textContent = ""; return; }
+  if (!isIndexView()) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
   el.hidden = false;
   el.textContent = "";
-  for (const f of getFiles()) {
+  const q = state.filter.trim().toLowerCase();
+  const files = getFiles().filter(
+    (f) => !q || String(f).toLowerCase().includes(q),
+  );
+  if (!files.length) {
+    el.innerHTML = `<p class="transfer-result mono">Ningún archivo coincide con el filtro global.</p>`;
+    return;
+  }
+  for (const f of files) {
     const s = fileSummary(f);
-    const topTxt = s.top.length ? s.top.map(([e, n]) => `${e} (${n})`).join(", ") : "—";
+    const topTxt = s.top.length
+      ? s.top.map(([e, n]) => `${e} (${n})`).join(", ")
+      : "—";
     const card = document.createElement("button");
     card.type = "button";
     card.className = "file-card";
@@ -142,9 +206,15 @@ function renderIndex() {
 function renderFileHead() {
   const el = $("#fileViewHead");
   const showBack = isMulti() && state.activeFile !== ALL;
-  if (!showBack) { el.hidden = true; el.textContent = ""; return; }
+  if (!showBack) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
   const s = fileSummary(state.activeFile);
-  const topTxt = s.top.length ? s.top.map(([e, n]) => `${e} (${n})`).join(", ") : "—";
+  const topTxt = s.top.length
+    ? s.top.map(([e, n]) => `${e} (${n})`).join(", ")
+    : "—";
   el.hidden = false;
   el.innerHTML =
     `<button type="button" class="link-back" data-file="${ALL}">← Todos</button>` +
@@ -153,19 +223,34 @@ function renderFileHead() {
     `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>`;
 }
 
+function renderGlobalFilter() {
+  const row = $("#globalFilterRow");
+  if (!row) return;
+  row.hidden = !(isMulti() && state.columns.length > 0);
+}
+
+function renderFileFilters() {
+  const row = $("#fileFilterRow");
+  if (!row) return;
+  row.hidden = isIndexView() || state.columns.length === 0;
+}
+
 function renderEntityOptions() {
   const sel = $("#in-entity");
   const cur = state.entity;
+  const scoped = getEntitiesForScope();
   sel.textContent = "";
   const all = document.createElement("option");
-  all.value = ""; all.textContent = "Todas";
+  all.value = "";
+  all.textContent = "Todas";
   sel.append(all);
-  for (const e of getEntities()) {
+  for (const e of scoped) {
     const o = document.createElement("option");
-    o.value = e; o.textContent = e;
+    o.value = e;
+    o.textContent = e;
     sel.append(o);
   }
-  sel.value = cur && getEntities().includes(cur) ? cur : "";
+  sel.value = cur && scoped.includes(cur) ? cur : "";
   state.entity = sel.value;
 }
 
@@ -174,19 +259,42 @@ function renderTable() {
   const tb = $("#piiListBody");
   const info = $("#pagingInfo");
   const btnFile = $("#btnExportFile");
+  const rowFile = $("#fileExportRow");
   // En índice Todos no hay tabla, solo cards.
   if (isIndexView()) {
     wrap.hidden = true;
     btnFile.hidden = true;
+    if (rowFile) rowFile.hidden = true;
     info.textContent = "Selecciona un archivo para ver su tabla completa.";
     return;
   }
   wrap.hidden = false;
+  if (rowFile) rowFile.hidden = false;
   tb.textContent = "";
   const rows = visibleColumns();
   const inFile = isMulti() && state.activeFile !== ALL;
-  btnFile.hidden = !inFile;
-  if (inFile) btnFile.textContent = `Exportar ${state.activeFile}`;
+  const singleFile = !isMulti() && getFiles().length === 1;
+  const showBtn = state.columns.length > 0;
+  const fmt = ($("#selExportFileFmt") || {}).value || "csv";
+  const ext = fmt === "xls" ? ".xls" : ".csv";
+  const nameEl = $("#fileExportName");
+  btnFile.hidden = !showBtn;
+  if (showBtn) {
+    const label = inFile
+      ? state.activeFile
+      : singleFile
+        ? getFiles()[0]
+        : "esta vista";
+    btnFile.textContent = `Descargar ${label} (${ext})`;
+    if (nameEl) {
+      const total = inFile
+        ? fileSummary(state.activeFile).total
+        : state.columns.length;
+      nameEl.textContent = `Tabla: ${label} · ${rows.length} de ${total} columnas visibles`;
+    }
+  } else if (nameEl) {
+    nameEl.textContent = "";
+  }
   info.textContent = state.columns.length
     ? `Mostrando ${rows.length} de ${inFile ? fileSummary(state.activeFile).total : state.columns.length} columnas${state.activeFile !== ALL ? ` en ${state.activeFile}` : ""}.`
     : "";
@@ -195,9 +303,10 @@ function renderTable() {
     const td = document.createElement("td");
     td.colSpan = 6;
     td.textContent = state.columns.length
-      ? "Ninguna columna coincide con el filtro."
-      : "Nada inspeccionado todavía. Cuando lo haya, se numera aquí.";
-    tr.append(td); tb.append(tr);
+      ? "Ninguna columna coincide con el filtro"
+      : "Nada inspeccionado todavía";
+    tr.append(td);
+    tb.append(tr);
     return;
   }
   const showFile = state.activeFile === ALL;
@@ -205,31 +314,65 @@ function renderTable() {
     const tr = document.createElement("tr");
     if (col.is_pii) tr.className = "pii-row";
     const ent = col.entity ?? "—";
-    const entP = (col.entity_probability === null || col.entity_probability === undefined)
-      ? "—" : pctText(col.entity_probability);
+    const entP =
+      col.entity_probability === null || col.entity_probability === undefined
+        ? "—"
+        : pctText(col.entity_probability);
     tr.innerHTML =
-      (showFile ? `<td>${escapeHtml(col.source_file || "")}</td>` : `<td class="muted">—</td>`) +
+      (showFile
+        ? `<td>${escapeHtml(col.source_file || "")}</td>`
+        : `<td class="muted">—</td>`) +
       `<td><strong>${escapeHtml(col.name)}</strong></td>` +
       `<td><span class="status-badge ${col.is_pii ? "danger" : "success"}">${col.is_pii ? "PII" : "NO PII"}</span></td>` +
       `<td><span class="prob-num">${pctText(col.pii_probability)}</span></td>` +
       `<td>${escapeHtml(ent)}</td><td>${escapeHtml(entP)}</td>`;
-    // Oculta la columna Archivo cuando ya estás dentro de un tab de archivo.
+    // Oculta la columna Archivo cuando ya se encuentra dentro de un tab de archivo.
     tb.append(tr);
   }
   // Oculta/muestra la columna Archivo según vista.
   const thFile = $("#piiTable thead th:first-child");
   if (thFile) thFile.style.display = showFile ? "" : "none";
-  Array.from(tb.rows).forEach((r) => { if (r.cells[0]) r.cells[0].style.display = showFile ? "" : "none"; });
+  Array.from(tb.rows).forEach((r) => {
+    if (r.cells[0]) r.cells[0].style.display = showFile ? "" : "none";
+  });
+}
+
+function renderReport() {
+  const art = $("#article-report");
+  if (!art) return;
+  art.hidden = !(isMulti() && state.columns.length > 0);
+  if (art.hidden) return;
+  const total = state.columns.length;
+  const pii = state.columns.filter((c) => c.is_pii).length;
+  const files = getFiles().length;
+  const fmt = ($("#selReportFmt") || {}).value || "csv";
+  const ext = fmt === "xls" ? ".xls" : ".csv";
+  const sum = $("#reportSummary");
+  if (sum)
+    sum.textContent = `${files} tablas · ${total} columnas · ${pii} PII → reporte_pii_global${ext}`;
+  const br = $("#btnGenerateReport");
+  if (br) br.textContent = `Descargar reporte global (${ext})`;
 }
 
 function renderAll() {
-  renderMeta(); renderKPIs(); renderTabs(); renderIndex(); renderFileHead();
-  renderEntityOptions(); renderTable();
+  renderMeta();
+  renderKPIs();
+  renderTabs();
+  renderIndex();
+  renderFileHead();
+  renderGlobalFilter();
+  renderFileFilters();
+  renderEntityOptions();
+  renderTable();
+  renderReport();
 }
 
 function showAlert(msg, kind = "error") {
   const box = $("#uploadError");
-  if (!msg) { box.hidden = true; return; }
+  if (!msg) {
+    box.hidden = true;
+    return;
+  }
   box.className = "alert " + (kind === "warn" ? "alert-warn" : "alert-error");
   $("#uploadError-text").textContent = msg;
   box.hidden = false;
@@ -240,18 +383,31 @@ function setBusy(b) {
   state.busy = b;
   $("#btnProcess").disabled = b;
   $("#btnProcess").textContent = b ? "Analizando…" : "Analizar PII";
-  $("#btnGenerateCsv").disabled = b;
   const bf = $("#btnExportFile");
   if (bf) bf.disabled = b;
+  const br = $("#btnGenerateReport");
+  if (br) br.disabled = b;
+  const sf = $("#selExportFileFmt");
+  if (sf) sf.disabled = b;
+  const sr = $("#selReportFmt");
+  if (sr) sr.disabled = b;
   $("#loadingSkeleton").hidden = !b;
   if (b) $("#upload-result").textContent = "Analizando columnas…";
 }
 
 function updateFileHint() {
-  const input = $("#datasetFile"), hint = $("#fileHint");
+  const input = $("#datasetFile"),
+    hint = $("#fileHint");
   const n = input.files ? input.files.length : 0;
-  if (!n) { hint.textContent = "Ningún archivo seleccionado"; hint.classList.remove("has-files"); return; }
-  const names = Array.from(input.files).slice(0, 3).map((f) => f.name).join(", ");
+  if (!n) {
+    hint.textContent = "Ningún archivo seleccionado";
+    hint.classList.remove("has-files");
+    return;
+  }
+  const names = Array.from(input.files)
+    .slice(0, 3)
+    .map((f) => f.name)
+    .join(", ");
   hint.textContent = `${n} archivo(s): ${names}${n > 3 ? ` +${n - 3} más` : ""}`;
   hint.classList.add("has-files");
 }
@@ -260,11 +416,20 @@ function clearAll() {
   $("#pii-form").reset();
   updateFileHint();
   showAlert(null);
-  $("#note-file").textContent = "Se analizan nombres de columna. Nada sale del servidor.";
-  state.columns = []; state.filter = ""; state.onlyPii = false;
-  state.activeFile = ALL; state.entity = "";
-  $("#in-filter").value = ""; $("#in-only-pii").checked = false;
+  $("#note-file").textContent =
+    "Se analizan nombres de columna. Nada sale del servidor.";
+  state.columns = [];
+  state.filter = "";
+  state.onlyPii = false;
+  state.activeFile = ALL;
+  state.entity = "";
+  $("#in-filter").value = "";
+  $("#in-only-pii").checked = false;
   $("#in-entity").value = "";
+  const sf = $("#selExportFileFmt");
+  if (sf) sf.value = "csv";
+  const sr = $("#selReportFmt");
+  if (sr) sr.value = "csv";
   $("#upload-result").textContent = "";
   $("#pagingInfo").textContent = "";
   renderAll();
@@ -288,16 +453,21 @@ async function onSubmit(e) {
   try {
     const data = await apiProcess(fd);
     state.columns = data.columns_analysis || [];
-    state.activeFile = ALL; state.entity = "";
-    $("#in-filter").value = ""; state.filter = "";
-    $("#in-only-pii").checked = false; state.onlyPii = false;
+    state.activeFile = ALL;
+    state.entity = "";
+    $("#in-filter").value = "";
+    state.filter = "";
+    $("#in-only-pii").checked = false;
+    state.onlyPii = false;
     renderAll();
     const pii = state.columns.filter((c) => c.is_pii).length;
     const nFiles = getFiles().length;
-    $("#upload-result").textContent = nFiles > 1
-      ? `${nFiles} archivos · ${state.columns.length} columnas · ${pii} PII. Estás en Todos: elige una tarjeta.`
-      : `${state.columns.length} columnas · ${pii} PII.`;
-    if (data.warnings && data.warnings.length) showAlert(data.warnings.join(" | "), "warn");
+    $("#upload-result").textContent =
+      nFiles > 1
+        ? `${nFiles} archivos · ${state.columns.length} columnas · ${pii} PII. Estás en Todos: elige una tarjeta.`
+        : `${state.columns.length} columnas · ${pii} PII.`;
+    if (data.warnings && data.warnings.length)
+      showAlert(data.warnings.join(" | "), "warn");
   } catch (err) {
     showAlert(err.message || "Error desconocido al procesar las tablas.");
   } finally {
@@ -306,68 +476,175 @@ async function onSubmit(e) {
 }
 
 function toCsvRow(fields) {
-  return fields.map((f) => {
-    const v = String(f ?? "");
-    return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-  }).join(",");
+  return fields
+    .map((f) => {
+      const v = String(f ?? "");
+      return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    })
+    .join(",");
 }
 
-function downloadCsv(filename, rows) {
-  const header = ["Archivo", "Nombre de Columna", "Prediccion", "Probabilidad PII (%)", "Entidad", "Probabilidad Entidad (%)"];
-  const body = rows.map((c) => [
-    c.source_file || "", c.name, c.is_pii ? "PII" : "NO PII",
-    (Number(c.pii_probability || 0) * 100).toFixed(2), c.entity ?? "",
-    (c.entity_probability === null || c.entity_probability === undefined) ? "" : (Number(c.entity_probability) * 100).toFixed(2),
+const EXPORT_HEADER = [
+  "Archivo",
+  "Nombre de Columna",
+  "Prediccion",
+  "Probabilidad PII (%)",
+  "Entidad",
+  "Probabilidad Entidad (%)",
+];
+
+function buildExportRows(cols) {
+  return cols.map((c) => [
+    c.source_file || "",
+    c.name,
+    c.is_pii ? "PII" : "NO PII",
+    (Number(c.pii_probability || 0) * 100).toFixed(2),
+    c.entity ?? "",
+    c.entity_probability === null || c.entity_probability === undefined
+      ? ""
+      : (Number(c.entity_probability) * 100).toFixed(2),
   ]);
-  const blob = new Blob(["\ufeff" + [header, ...body].map(toCsvRow).join("\r\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
+}
+
+function triggerDownload(url, filename) {
   const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.append(a); a.click(); a.remove();
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+function downloadCsv(filename, cols) {
+  const blob = new Blob(
+    [
+      "\ufeff" +
+        [EXPORT_HEADER, ...buildExportRows(cols)].map(toCsvRow).join("\r\n"),
+    ],
+    { type: "text/csv;charset=utf-8;" },
+  );
+  const url = URL.createObjectURL(blob);
+  triggerDownload(url, filename);
   URL.revokeObjectURL(url);
 }
 
-function handleCsv() {
-  if (!state.columns.length) {
-    showAlert("Primero analiza al menos una tabla antes de generar el CSV.");
-    return;
-  }
-  downloadCsv("analisis_pii.csv", state.columns);
+function downloadXls(filename, cols) {
+  const cells = (v) => `<td>${escapeHtml(v)}</td>`;
+  const head = `<tr>${EXPORT_HEADER.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
+  const body = buildExportRows(cols)
+    .map((r) => `<tr>${r.map(cells).join("")}</tr>`)
+    .join("");
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table border="1">${head}${body}</table></body></html>`;
+  const blob = new Blob(["\ufeff" + html], {
+    type: "application/vnd.ms-excel;charset=utf-8;",
+  });
+  const url = URL.createObjectURL(blob);
+  triggerDownload(url, filename);
+  URL.revokeObjectURL(url);
+}
+
+function downloadWithFormat(base, fmt, cols) {
+  if (fmt === "xls") downloadXls(`${base}.xls`, cols);
+  else downloadCsv(`${base}.csv`, cols);
+}
+
+function safeBase(name) {
+  return (
+    String(name || "archivo")
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .slice(0, 80) || "archivo"
+  );
 }
 
 function handleExportFile() {
-  if (!state.columns.length || state.activeFile === ALL) return;
+  if (!state.columns.length) {
+    showAlert("Primero analiza al menos una tabla antes de exportar.");
+    return;
+  }
+  if (isIndexView()) return;
   const rows = visibleColumns();
   if (!rows.length) {
     showAlert("Nada que exportar con los filtros actuales.", "warn");
     return;
   }
-  downloadCsv(`analisis_pii_${state.activeFile}.csv`, rows);
+  const fmt = ($("#selExportFileFmt") || {}).value || "csv";
+  const target =
+    isMulti() && state.activeFile !== ALL
+      ? state.activeFile
+      : getFiles()[0] || "vista";
+  downloadWithFormat(`analisis_pii_${safeBase(target)}`, fmt, rows);
+}
+
+function handleGenerateReport() {
+  if (!state.columns.length) {
+    showAlert(
+      "Primero analiza al menos una tabla antes de generar el reporte.",
+    );
+    return;
+  }
+  const fmt = ($("#selReportFmt") || {}).value || "csv";
+  downloadWithFormat("reporte_pii_global", fmt, state.columns);
+}
+
+function resetFileFilters() {
+  state.entity = "";
+  state.onlyPii = false;
+  const se = $("#in-entity");
+  if (se) se.value = "";
+  const sp = $("#in-only-pii");
+  if (sp) sp.checked = false;
 }
 
 function setActiveFile(f) {
   state.activeFile = f || ALL;
+  resetFileFilters();
   renderAll();
 }
 
 function boot() {
   $("#pii-form").addEventListener("submit", onSubmit);
   $("#btn-clear").addEventListener("click", clearAll);
-  $("#btnGenerateCsv").addEventListener("click", handleCsv);
   $("#btnExportFile").addEventListener("click", handleExportFile);
+  const br = $("#btnGenerateReport");
+  if (br) br.addEventListener("click", handleGenerateReport);
   $("#datasetFile").addEventListener("change", updateFileHint);
   const drop = $(".file-drop");
-  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("dragover"); }));
-  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("dragover"); }));
+  ["dragenter", "dragover"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      drop.classList.add("dragover");
+    }),
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      drop.classList.remove("dragover");
+    }),
+  );
   drop.addEventListener("drop", (e) => {
     if (e.dataTransfer && e.dataTransfer.files.length) {
       $("#datasetFile").files = e.dataTransfer.files;
       updateFileHint();
     }
   });
-  $("#in-filter").addEventListener("input", (e) => { state.filter = e.target.value; renderIndex(); renderFileHead(); renderTable(); });
-  $("#in-only-pii").addEventListener("change", (e) => { state.onlyPii = e.target.checked; renderTable(); });
-  $("#in-entity").addEventListener("change", (e) => { state.entity = e.target.value; renderTable(); });
+  $("#in-filter").addEventListener("input", (e) => {
+    state.filter = e.target.value;
+    renderIndex();
+    renderFileHead();
+    renderTable();
+  });
+  $("#in-only-pii").addEventListener("change", (e) => {
+    state.onlyPii = e.target.checked;
+    renderTable();
+  });
+  $("#in-entity").addEventListener("change", (e) => {
+    state.entity = e.target.value;
+    renderTable();
+  });
+  const sf = $("#selExportFileFmt");
+  if (sf) sf.addEventListener("change", () => renderTable());
+  const sr = $("#selReportFmt");
+  if (sr) sr.addEventListener("change", () => renderReport());
   $("#fileTabs").addEventListener("click", (e) => {
     const b = e.target.closest("[data-file]");
     if (b) setActiveFile(b.dataset.file);
@@ -380,7 +657,8 @@ function boot() {
     const b = e.target.closest("[data-file]");
     if (b) setActiveFile(b.dataset.file);
   });
-  renderAll(); updateFileHint();
+  renderAll();
+  updateFileHint();
 }
 
 document.addEventListener("DOMContentLoaded", boot);

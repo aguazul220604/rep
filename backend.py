@@ -1,25 +1,9 @@
-"""
-Backend webapp Detector PII v5.1 OPTIMIZADO (ServiceNow + Juez 23 clases).
-
-Carga una vez al arrancar desde las carpetas gestionadas en Dataiku:
-  fase5_modelo_v3/ : modelo.txt (LightGBM), vec_name.pkl, encoders.json
-  fase2_juez_v3/   : modelo.txt, vectorizer.pkl, clases.json (23), calibrador.pkl
-
-Jerarquía de Decisión:
-  Nivel 0 EXCLUSIÓN: Filtro de metadatos de sistema (evita falsos positivos como 'number').
-  Nivel 1 EXACTO   : Coincidencia directa en lista canónica/roles -> PII forzado.
-  Nivel 2 RARO     : Abreviaturas bancarias, roles ServiceNow y slang -> PII forzado.
-  Nivel 3 MODELO   : Probabilidad estadística del modelo ML >= THRESHOLD (0.667).
-  Nivel 4 FUZZY    : PISO (0.15) <= prob < THRESHOLD + keyword de rescate.
-"""
-
 import json
 import os
 import pickle
 import re
 import traceback
 import unicodedata
-
 import dataiku
 import numpy as np
 import pandas as pd
@@ -28,8 +12,7 @@ from scipy.sparse import csr_matrix, hstack
 
 _LOAD_ERROR = None
 
-# --- Funciones Auxiliares de Normalización y Sanitización ---
-
+# Funciones auxiliares de normalización
 def _strip_accents(s):
     return "".join(
         c for c in unicodedata.normalize("NFD", str(s))
@@ -39,17 +22,12 @@ def _strip_accents(s):
 def _clean_string(s):
     if pd.isna(s):
         return ""
-    # Elimina caracteres especiales de formato como '*', '?', '#', etc.
+    # Eliminar caracteres especiales de formato 
     s_clean = re.sub(r"[^\w\s\.]", " ", str(s))
     return re.sub(r"\s+", " ", _strip_accents(s_clean).lower()).strip()
 
 def _get_key_variants(s):
-    """
-    Normaliza y genera variantes para campos anidados con puntos (ServiceNow dot-walking):
-    Ejemplo: 'assignment_group.manager.manager' ->
-      full_key: 'assignment group manager manager'
-      last_token: 'manager'
-    """
+    # Normaliza y genera variantes para campos anidados con puntos
     raw_clean = _clean_string(s)
     parts = [p.strip() for p in raw_clean.split(".") if p.strip()]
     full_key = " ".join(parts) if parts else raw_clean
@@ -69,17 +47,14 @@ def _softmax(scores):
         scores = e / e.sum(axis=1, keepdims=True)
     return scores
 
-# --- Configuración de Umbrales y Probabilidades ---
-
+# Configuración de umbrales
 THRESHOLD = 0.667       # Umbral binario PII principal
 PISO_RESCATE = 0.15     # Umbral mínimo para activar rescate fuzzy
-UMBRAL_FALLBACK = 0.50  # Si la certidumbre del Juez es baja (<0.50), interviene la regla
-
+UMBRAL_FALLBACK = 0.50  # Si la certidumbre del modelo juez es baja (<0.50), interviene la regla
 PROB_REGLA = {"exacto": 0.95, "raro": 0.90, "fuzzy": 0.80}
 PROB_ENT_REGLA = 0.90
 
-# --- Filtros de Exclusión (Evita Falsos Positivos en Metadata de Sistema) ---
-
+# Filtros de exclusión
 EXCLUSIONES_SISTEMA = {
     "number", "inc_number", "ticket_number", "sys_id", "active",
     "sys_updated_on", "sys_created_on", "u_schedule", "type",
@@ -88,14 +63,12 @@ EXCLUSIONES_SISTEMA = {
 }
 
 def _es_exclusion_sistema(full_key, last_token):
-    # Si es exactamente un campo de sistema y no contiene explicito 'user_name' o 'manager'
     if last_token in EXCLUSIONES_SISTEMA or full_key in EXCLUSIONES_SISTEMA:
         if not any(k in full_key for k in ("user_name", "manager", "head", "caller", "assigned")):
             return True
     return False
 
-# --- Mapeos y Reglas Deterministas ---
-
+# Mapeos y reglas deterministas
 _REGLAS_FALLBACK = [
     ("curp", ("curp",)),
     ("rfc", ("rfc",)),
@@ -122,7 +95,7 @@ def _fallback_regla(key_light, clases):
     return None
 
 _EXACTOS_FUERZA = {
-    # Nombres Canónicos Banamex y Sufijos Comunes
+    # Nombres y sufijos comunes
     "cliente", "correo", "telefono", "contrato", "direccion", "rfc",
     "nomina", "saldo", "cuenta", "nombre", "soeid", "credito",
     "fecha vencimiento", "fecha nacimiento", "sexo", "apellido", "curp",
@@ -130,7 +103,7 @@ _EXACTOS_FUERZA = {
     "crd acct nbr", "aper cte016", "aper cte", "apertura cuenta",
     "fecha venc", "fecha nac", "ap paterno", "ap materno",
     "num dependientes", "num autos",
-    # Roles Corporativos y Campos Frecuentes ServiceNow
+    # Roles corporativos / campos frecuentes 
     "manager", "head", "lead", "owner", "assigned to", "caller", "caller id",
     "user name", "geid", "sys created by", "city", "location",
     "u support head", "u support manager", "u secondary manager",
@@ -239,8 +212,7 @@ def _rescate_regex(full_key, last_token):
             return ent
     return None
 
-# --- Control de Dimensiones de Matriz ---
-
+# Control de dimensiones de matriz
 def _check_width_bin(X, clf):
     esp = int(clf.num_feature())
     if X.shape[1] > esp:
@@ -261,8 +233,7 @@ def _check_width_juez(Xj, j_bst):
             "Despliega vectorizer.pkl + modelo.txt + clases.json juntos desde fase2_juez_v3.")
     return Xj
 
-# --- Carga de Artefactos ---
-
+# Carga de artefactos
 def _load_artifacts():
     import lightgbm as lgb
 
@@ -306,8 +277,7 @@ except Exception as exc:
     _LOAD_ERROR = f"{type(exc).__name__}: {exc}"
     traceback.print_exc()
 
-# --- Lectura de Archivos ---
-
+# Lectura de archivos 
 def read_uploaded_file(file):
     filename = file.filename.lower()
     if filename.endswith(".csv"):
@@ -317,12 +287,10 @@ def read_uploaded_file(file):
     else:
         raise ValueError(f"Formato no soportado para '{file.filename}'. Sube archivos .csv o .xlsx.")
 
-# --- Lógica Principal de Inferencia ---
-
+# Lógica de inferencia
 def predict_columns(rows):
     base = pd.DataFrame(rows)
     
-    # Extrae variantes limpia completa y ultimo token (para ServiceNow dot walking)
     key_variants = [ _get_key_variants(name) for name in base["name"] ]
     full_keys = [ kv[0] for kv in key_variants ]
     last_tokens = [ kv[1] for kv in key_variants ]
@@ -348,12 +316,12 @@ def predict_columns(rows):
 
     c_exact = c_raro = c_fuzzy = 0
 
-    # Evaluación y Rescate por Reglas (Capas 0, 1, 2 y 4)
+    # Evaluación y rescate por reglas
     for i, (pr, fk, lt) in enumerate(zip(prob, full_keys, last_tokens)):
         if not fk:
             continue
             
-        # Nivel 0: Exclusión de Metadatos del Sistema (p. ej. 'number' -> NO PII)
+        # Exclusión de metadatos del sistema
         if _es_exclusion_sistema(fk, lt):
             pii[i] = False
             prob_final[i] = 0.0000
@@ -363,7 +331,7 @@ def predict_columns(rows):
         if pii[i]:
             continue
 
-        # Nivel 1: Coincidencia Exacta
+        # Coincidencia exacta
         if _es_exacto_fuerza(fk, lt):
             pii[i] = True
             prior_ent[i] = _rescate_regex(fk, lt) or _fallback_regla(fk, ARTS["j_clases"])
@@ -371,7 +339,7 @@ def predict_columns(rows):
             prob_final[i] = max(float(pr), PROB_REGLA["exacto"])
             c_exact += 1
             
-        # Nivel 2: Casos Raros o Roles Corporativos Especiales
+        # Casos raros
         elif _raro_fuerza(fk, lt) is not None:
             pii[i] = True
             prior_ent[i] = _raro_fuerza(fk, lt)
@@ -379,7 +347,7 @@ def predict_columns(rows):
             prob_final[i] = max(float(pr), PROB_REGLA["raro"])
             c_raro += 1
             
-        # Nivel 4: Rescate Fuzzy
+        # Rescate Fuzzy
         elif PISO_RESCATE <= float(pr) < ARTS["threshold"]:
             r = _rescate_regex(fk, lt)
             if r is not None:
@@ -393,7 +361,7 @@ def predict_columns(rows):
           f"pii_modelo={int((prob >= ARTS['threshold']).sum())} "
           f"exacto={c_exact} raro={c_raro} fuzzy={c_fuzzy} de {len(base)}")
 
-    # Determinación de la Entidad (Juez sobre las 23 clases)
+    # Determinación de la entidad (Juez sobre las 23 clases)
     ent = [None] * len(base)
     eprob = [None] * len(base)
     m = (key_series != "").to_numpy() & np.asarray(pii)
@@ -443,8 +411,7 @@ def predict_columns(rows):
         "entity_probability": ep if bool(p) else None,
     } for r, p, pr, e, ep in zip(rows, pii, prob_final, ent, eprob)]
 
-# --- Endpoint Flask ---
-
+# Endpoint
 @app.route('/process_table', methods=['POST'])
 def process_table():
     try:

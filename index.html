@@ -1473,6 +1473,21 @@
           <p class="slip-ref">PII 02</p>
         </header>
         <div id="kpiStrip" class="kpi-strip" hidden></div>
+        <div class="toolbar-row" id="globalFilterRow" hidden>
+          <div
+            class="field"
+            style="max-width: 52ch; flex: 2 1 260px; margin-bottom: 0"
+          >
+            <label class="field-label" for="in-filter">Filtro global</label>
+            <input
+              class="input mono"
+              id="in-filter"
+              type="text"
+              autocomplete="off"
+              placeholder="Filtrar por archivo, columna o entidad…"
+            />
+          </div>
+        </div>
         <div
           id="fileTabs"
           class="tabs"
@@ -1482,32 +1497,22 @@
         ></div>
         <div id="indexGrid" class="index-grid" hidden></div>
         <div id="fileViewHead" class="file-view-head" hidden></div>
-        <div class="toolbar-row">
-          <div
-            class="field"
-            style="max-width: 52ch; flex: 2 1 260px; margin-bottom: 0"
-          >
-            <label class="field-label" for="in-filter">Filtro</label>
-            <input
-              class="input mono"
-              id="in-filter"
-              type="text"
-              autocomplete="off"
-              placeholder="Filtrar por archivo, columna o entidad…"
-            />
-          </div>
+        <div class="toolbar-row" id="fileFilterRow" hidden>
           <div class="field" style="flex: 1 1 160px; margin-bottom: 0">
             <label class="field-label" for="in-entity">Entidad</label>
             <select class="select mono" id="in-entity">
               <option value="">Todas</option>
             </select>
           </div>
-        </div>
-        <div class="field">
-          <label class="choice"
-            ><input type="checkbox" id="in-only-pii" />
-            <span>Solo PII</span></label
+          <div
+            class="field"
+            style="flex: 0 1 auto; margin-bottom: 0; align-self: flex-end"
           >
+            <label class="choice"
+              ><input type="checkbox" id="in-only-pii" />
+              <span>Solo PII</span></label
+            >
+          </div>
         </div>
         <div id="loadingSkeleton" hidden>
           <div class="skeleton is-tall"></div>
@@ -1534,24 +1539,69 @@
           </table>
         </div>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
-        <div class="btn-row">
-          <button class="btn btn-primary" id="btnGenerateCsv" type="button">
-            Generar CSV
-          </button>
-          <button
-            class="btn btn-secondary"
-            id="btnExportFile"
-            type="button"
-            hidden
-          >
-            Exportar este archivo
-          </button>
+        <div class="dl-box" id="fileExportRow">
+          <p class="dl-title">Descargar resultados de análisis</p>
+          <p class="dl-sub mono" id="fileExportName" aria-live="polite"></p>
+          <div class="dl-controls">
+            <div class="field" style="flex: 0 1 200px; margin-bottom: 0">
+              <label class="field-label" for="selExportFileFmt"
+                >Formato de descarga</label
+              >
+              <select class="select mono dl-select" id="selExportFileFmt">
+                <option value="csv">CSV (.csv)</option>
+                <option value="xls">Excel (.xls)</option>
+              </select>
+            </div>
+            <button
+              class="btn btn-primary"
+              id="btnExportFile"
+              type="button"
+              hidden
+            >
+              Descargar
+            </button>
+          </div>
+          <span class="field-note">Los filtros aplican en la descarga</span>
         </div>
         <footer class="slip-foot">
           <span
             >Detección e Identificación de Datos de Información Personal
             (PII)</span
           >
+        </footer>
+      </article>
+      <article class="slip" id="article-report" aria-labelledby="t-rep" hidden>
+        <header class="slip-head">
+          <h2 class="slip-title" id="t-rep">Reporte global</h2>
+          <p class="slip-ref">PII 03</p>
+        </header>
+        <div class="dl-box">
+          <p class="dl-title">
+            Descargar resultados de análisis — todas las tablas
+          </p>
+          <p class="dl-sub mono" id="reportSummary" aria-live="polite"></p>
+          <div class="dl-controls">
+            <div class="field" style="flex: 0 1 200px; margin-bottom: 0">
+              <label class="field-label" for="selReportFmt"
+                >Formato de descarga</label
+              >
+              <select class="select mono dl-select" id="selReportFmt">
+                <option value="csv">CSV (.csv)</option>
+                <option value="xls">Excel (.xls)</option>
+              </select>
+            </div>
+            <button
+              class="btn btn-primary"
+              id="btnGenerateReport"
+              type="button"
+            >
+              Descargar reporte global
+            </button>
+          </div>
+          <span class="field-note">Abarca todos los archivos</span>
+        </div>
+        <footer class="slip-foot">
+          <span>Reporte PII global</span>
         </footer>
       </article>
     </main>

@@ -1427,35 +1427,38 @@
           <p class="slip-ref">PII 01</p>
         </header>
         <form id="pii-form" novalidate>
-          <div class="field" id="field-file">
-            <label class="field-label" for="datasetFile"
-              >Dataset (.csv, .xlsx, .xls)</label
-            >
-            <label class="file-drop" for="datasetFile"
-              ><span id="fileHint">Ningún archivo seleccionado</span></label
-            >
-            <input
-              type="file"
-              id="datasetFile"
-              accept=".csv,.xlsx,.xls"
-              multiple
-              hidden
-            />
-            <span class="field-note" id="note-file"
-              >Se analizan nombres de columna</span
-            >
+          <div class="upload-row">
+            <div class="field upload-main" id="field-file">
+              <label class="field-label" for="datasetFile"
+                >Dataset (.csv, .xlsx, .xls)</label
+              >
+              <label class="file-drop" for="datasetFile"
+                ><span id="fileHint">Ningún archivo seleccionado</span></label
+              >
+              <ul class="file-list mono" id="fileList" aria-live="polite"></ul>
+              <input
+                type="file"
+                id="datasetFile"
+                accept=".csv,.xlsx,.xls"
+                multiple
+                hidden
+              />
+              <span class="field-note" id="note-file"
+                >Se analizan nombres de columna</span
+              >
+            </div>
+            <div class="btn-row upload-side">
+              <button class="btn btn-primary" id="btnProcess" type="submit">
+                Analizar PII
+              </button>
+              <button class="btn btn-secondary" id="btn-clear" type="button">
+                Limpiar
+              </button>
+            </div>
           </div>
           <div class="alert alert-error" id="uploadError" hidden>
             <span class="alert-mark" aria-hidden="true">!</span
             ><span id="uploadError-text">—</span>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-primary" id="btnProcess" type="submit">
-              Analizar PII
-            </button>
-            <button class="btn btn-secondary" id="btn-clear" type="button">
-              Limpiar
-            </button>
           </div>
           <p
             class="transfer-result mono"
@@ -1478,14 +1481,15 @@
             class="field"
             style="max-width: 52ch; flex: 2 1 260px; margin-bottom: 0"
           >
-            <label class="field-label" for="in-filter">Filtro global</label>
+            <label class="field-label" for="in-filter">Buscar archivo</label>
             <input
               class="input mono"
               id="in-filter"
               type="text"
               autocomplete="off"
-              placeholder="Filtrar por archivo, columna o entidad…"
+              placeholder="Filtrar por nombre de archivo…"
             />
+            <span class="field-note">Buscador visual por archivo. Vacío = todo.</span>
           </div>
         </div>
         <div
@@ -1549,7 +1553,7 @@
               >
               <select class="select mono dl-select" id="selExportFileFmt">
                 <option value="csv">CSV (.csv)</option>
-                <option value="xls">Excel (.xls)</option>
+                <option value="xlsx">Excel (.xlsx)</option>
               </select>
             </div>
             <button
@@ -1587,7 +1591,7 @@
               >
               <select class="select mono dl-select" id="selReportFmt">
                 <option value="csv">CSV (.csv)</option>
-                <option value="xls">Excel (.xls)</option>
+                <option value="xlsx">Excel (.xlsx)</option>
               </select>
             </div>
             <button

@@ -1,4 +1,4 @@
-const API = { process: "process_table" };
+const API = { process: "process_table", export: "export_xlsx" };
 
 function apiUrl(path) {
   if (typeof getWebAppBackendUrl === "function") {
@@ -94,24 +94,24 @@ function fileSummary(file) {
 
 function visibleColumns() {
   const q = state.filter.trim().toLowerCase();
+  const scoped = tableScopeFile() !== null;
   return state.columns.filter((c) => {
     if (state.activeFile !== ALL && (c.source_file || "") !== state.activeFile)
       return false;
     if (state.onlyPii && !c.is_pii) return false;
     if (state.entity && (c.entity || "") !== state.entity) return false;
-    if (!q) return true;
-    return [c.source_file, c.name, c.entity].some((v) =>
-      String(v ?? "")
-        .toLowerCase()
-        .includes(q),
-    );
+    if (!q || scoped) return true;
+    return String(c.source_file ?? "")
+      .toLowerCase()
+      .includes(q);
   });
 }
 
 function renderMeta() {
   const total = state.columns.length;
   const pii = state.columns.filter((c) => c.is_pii).length;
-  $("#resultsMeta").textContent = `${total} columnas · ${pii} PII`;
+  const pct = total ? Math.round((pii / total) * 100) : 0;
+  $("#resultsMeta").textContent = `${total} columnas · ${pii} PII (${pct}%)`;
 }
 
 function renderKPIs() {
@@ -129,7 +129,7 @@ function renderKPIs() {
   el.hidden = false;
   el.innerHTML =
     `<div class="kpi"><span class="kpi-label">Columnas</span><span class="kpi-value">${total}</span></div>` +
-    `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} · ${pct}%</span></div>` +
+    `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
     `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Top entidad</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
 }
@@ -155,7 +155,13 @@ function renderTabs() {
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(state.activeFile === key));
     b.dataset.file = key;
-    b.innerHTML = `<span>${escapeHtml(label)}</span> <span class="tab-badge">${escapeHtml(sub)}</span>`;
+    b.title = label;
+    if (key !== ALL) {
+      const q = state.filter.trim().toLowerCase();
+      if (q && String(label).toLowerCase().includes(q))
+        b.classList.add("is-match");
+    }
+    b.innerHTML = `<span class="tab-name">${escapeHtml(label)}</span> <span class="tab-badge">${escapeHtml(sub)}</span>`;
     return b;
   };
   const totalPii = state.columns.filter((c) => c.is_pii).length;
@@ -276,7 +282,7 @@ function renderTable() {
   const singleFile = !isMulti() && getFiles().length === 1;
   const showBtn = state.columns.length > 0;
   const fmt = ($("#selExportFileFmt") || {}).value || "csv";
-  const ext = fmt === "xls" ? ".xls" : ".csv";
+  const ext = fmt === "xlsx" ? ".xlsx" : ".csv";
   const nameEl = $("#fileExportName");
   btnFile.hidden = !showBtn;
   if (showBtn) {
@@ -346,7 +352,7 @@ function renderReport() {
   const pii = state.columns.filter((c) => c.is_pii).length;
   const files = getFiles().length;
   const fmt = ($("#selReportFmt") || {}).value || "csv";
-  const ext = fmt === "xls" ? ".xls" : ".csv";
+  const ext = fmt === "xlsx" ? ".xlsx" : ".csv";
   const sum = $("#reportSummary");
   if (sum)
     sum.textContent = `${files} tablas · ${total} columnas · ${pii} PII → reporte_pii_global${ext}`;
@@ -395,21 +401,55 @@ function setBusy(b) {
   if (b) $("#upload-result").textContent = "Analizando columnas…";
 }
 
+function fmtSize(n) {
+  const v = Number(n || 0);
+  if (v < 1024) return `${v} B`;
+  if (v < 1048576) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / 1048576).toFixed(1)} MB`;
+}
+
 function updateFileHint() {
   const input = $("#datasetFile"),
-    hint = $("#fileHint");
-  const n = input.files ? input.files.length : 0;
-  if (!n) {
+    hint = $("#fileHint"),
+    list = $("#fileList");
+  const files = input.files ? Array.from(input.files) : [];
+  if (!files.length) {
     hint.textContent = "Ningún archivo seleccionado";
     hint.classList.remove("has-files");
+    if (list) list.textContent = "";
     return;
   }
-  const names = Array.from(input.files)
-    .slice(0, 3)
-    .map((f) => f.name)
-    .join(", ");
-  hint.textContent = `${n} archivo(s): ${names}${n > 3 ? ` +${n - 3} más` : ""}`;
+  hint.textContent = `${files.length} archivo(s) seleccionado(s)`;
   hint.classList.add("has-files");
+  if (!list) return;
+  list.textContent = "";
+  files.forEach((f, i) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "file-list-name";
+    name.textContent = `${f.name} · ${fmtSize(f.size)}`;
+    name.title = f.name;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "file-remove";
+    rm.dataset.idx = String(i);
+    rm.setAttribute("aria-label", `Quitar ${f.name}`);
+    rm.textContent = "×";
+    li.append(name, rm);
+    list.append(li);
+  });
+}
+
+function removeUploadFile(idx) {
+  const input = $("#datasetFile");
+  const files = input.files ? Array.from(input.files) : [];
+  if (idx < 0 || idx >= files.length) return;
+  const dt = new DataTransfer();
+  files.forEach((f, i) => {
+    if (i !== idx) dt.items.add(f);
+  });
+  input.files = dt.files;
+  updateFileHint();
 }
 
 function clearAll() {
@@ -528,24 +568,38 @@ function downloadCsv(filename, cols) {
   URL.revokeObjectURL(url);
 }
 
-function downloadXls(filename, cols) {
-  const cells = (v) => `<td>${escapeHtml(v)}</td>`;
-  const head = `<tr>${EXPORT_HEADER.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
-  const body = buildExportRows(cols)
-    .map((r) => `<tr>${r.map(cells).join("")}</tr>`)
-    .join("");
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table border="1">${head}${body}</table></body></html>`;
-  const blob = new Blob(["\ufeff" + html], {
-    type: "application/vnd.ms-excel;charset=utf-8;",
+async function downloadXlsx(filename, cols) {
+  const res = await fetch(apiUrl(API.export), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, rows: buildExportRows(cols) }),
   });
+  if (!res.ok) {
+    let msg = "";
+    try {
+      const d = await res.json();
+      msg = d.message || "";
+    } catch {}
+    throw new Error(msg || "HTTP " + res.status + " en " + API.export);
+  }
+  const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   triggerDownload(url, filename);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-function downloadWithFormat(base, fmt, cols) {
-  if (fmt === "xls") downloadXls(`${base}.xls`, cols);
-  else downloadCsv(`${base}.csv`, cols);
+async function downloadWithFormat(base, fmt, cols) {
+  if (fmt === "xlsx") {
+    try {
+      await downloadXlsx(`${base}.xlsx`, cols);
+    } catch (err) {
+      showAlert(
+        (err.message || "No se pudo generar el XLSX.") + " Se descargará CSV.",
+        "warn",
+      );
+      downloadCsv(`${base}.csv`, cols);
+    }
+  } else downloadCsv(`${base}.csv`, cols);
 }
 
 function safeBase(name) {
@@ -608,6 +662,12 @@ function boot() {
   const br = $("#btnGenerateReport");
   if (br) br.addEventListener("click", handleGenerateReport);
   $("#datasetFile").addEventListener("change", updateFileHint);
+  const fl = $("#fileList");
+  if (fl)
+    fl.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-idx]");
+      if (b) removeUploadFile(Number(b.dataset.idx));
+    });
   const drop = $(".file-drop");
   ["dragenter", "dragover"].forEach((ev) =>
     drop.addEventListener(ev, (e) => {
@@ -629,6 +689,7 @@ function boot() {
   });
   $("#in-filter").addEventListener("input", (e) => {
     state.filter = e.target.value;
+    renderTabs();
     renderIndex();
     renderFileHead();
     renderTable();

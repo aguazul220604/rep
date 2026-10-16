@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import pickle
@@ -7,8 +8,16 @@ import unicodedata
 import dataiku
 import numpy as np
 import pandas as pd
-from flask import jsonify, request
+from flask import Response, jsonify, request
 from scipy.sparse import csr_matrix, hstack
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    _XLSX_ERROR = None
+except Exception as _exc_xlsx:
+    Workbook = None
+    _XLSX_ERROR = f"{type(_exc_xlsx).__name__}: {_exc_xlsx}"
 
 _LOAD_ERROR = None
 
@@ -459,6 +468,74 @@ def process_table():
             response["warnings"] = skipped
         return jsonify(response)
 
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+EXPORT_XLSX_HEADER = ["Archivo", "Nombre de Columna", "Prediccion",
+                      "Probabilidad PII (%)", "Entidad", "Probabilidad Entidad (%)"]
+
+
+def _safe_xlsx_filename(name):
+    base = re.sub(r"[\\/:*?\"<>|]", "_", str(name or "reporte")).strip()[:80] or "reporte"
+    return base if base.lower().endswith(".xlsx") else base + ".xlsx"
+
+
+@app.route('/export_xlsx', methods=['POST'])
+def export_xlsx():
+    try:
+        if Workbook is None:
+            return jsonify({
+                "status": "error",
+                "message": f"openpyxl no disponible: {_XLSX_ERROR}. Usa CSV.",
+            }), 500
+        payload = request.get_json(force=True, silent=True) or {}
+        rows = payload.get("rows") or []
+        if not isinstance(rows, list) or not rows:
+            return jsonify({"status": "error", "message": "Sin filas para exportar."}), 400
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "PII"
+        ws.freeze_panes = "A2"
+        head_fill = PatternFill("solid", fgColor="003746")
+        head_font = Font(bold=True, color="FFFFFF")
+        ws.append(EXPORT_XLSX_HEADER)
+        for cell in ws[1]:
+            cell.fill = head_fill
+            cell.font = head_font
+            cell.alignment = Alignment(vertical="center")
+        for r in rows:
+            vals = list(r)[:6] + [""] * max(0, 6 - len(r))
+            out = []
+            for idx, v in enumerate(vals[:6]):
+                if idx in (3, 5) and v not in (None, ""):
+                    try:
+                        out.append(float(v))
+                        continue
+                    except (TypeError, ValueError):
+                        pass
+                out.append("" if v is None else str(v))
+            ws.append(out)
+        for col in ws.columns:
+            width = max((len(str(c.value or "")) for c in col), default=10)
+            ws.column_dimensions[col[0].column_letter].width = min(width + 2, 48)
+        for row in ws.iter_rows(min_row=2, min_col=4, max_col=6):
+            for cell in row:
+                if isinstance(cell.value, float):
+                    cell.number_format = '0.00'
+        ws.auto_filter.ref = ws.dimensions
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            buf.getvalue(),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition":
+                     f"attachment; filename=\"{_safe_xlsx_filename(payload.get('filename'))}\""},
+        )
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500

@@ -5,18 +5,13 @@ Python recipe (Dataiku): entrena el modelo de análisis de contenido.
 Entrada : dataset de entrenamiento (value, type) con las clases
           nombre, apellido, direccion, empresa y otro
 Salida  : managed folder con
-            content_model.joblib      pipeline completo (TF-IDF + logreg)
-            config.json               etiquetas, temperatura, tau, theta, versiones
-            pii_content_features.py   copia del módulo compartido
-            metrics.json              métricas completas
-            classification_report.csv / confusion_matrix.csv / .png
-            column_level_grid.csv     simulación a nivel columna (tau x theta)
-            top_features.csv          features con más peso por clase
-            oof_errors.csv            errores más confiados (revisar etiquetas)
+            model.joblib              bundle {"model", "classes", labels, temperatura, tau, theta, ...}
+            report.html               reporte consolidado de métricas y gráficas
 
 Requiere el módulo pii_content_features.py en Project > Libraries > python.
 """
-import inspect
+import base64
+import html
 import io
 import json
 import platform
@@ -38,7 +33,6 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import FeatureUnion, Pipeline
 from sklearn.preprocessing import MaxAbsScaler
 
-import pii_content_features as pcf
 from pii_content_features import (ValueShapeFeatures, aggregate_column,
                                   apply_temperature, canonical, normalize_text)
 
@@ -84,6 +78,23 @@ def put_bytes(path, data):
     folder.upload_stream(path, io.BytesIO(data))
 
 
+def cleanup_output_folder(keep):
+    """Deja en el folder únicamente los artefactos indicados en `keep`."""
+    try:
+        existing = folder.list_paths_in_partition()
+    except Exception as e:
+        print("No se pudo listar el folder para limpieza: %s" % e)
+        return
+    for path in existing:
+        name = path.lstrip("/").rstrip("/")
+        if name in keep:
+            continue
+        try:
+            folder.delete_path(path)
+        except Exception as e:
+            print("No se pudo eliminar '%s': %s" % (path, e))
+
+
 def _json_default(o):
     if isinstance(o, (np.integer,)):
         return int(o)
@@ -92,14 +103,6 @@ def _json_default(o):
     if isinstance(o, np.ndarray):
         return o.tolist()
     return str(o)
-
-
-def put_json(path, obj):
-    put_bytes(path, json.dumps(obj, default=_json_default, ensure_ascii=False, indent=2).encode("utf-8"))
-
-
-def put_df(path, df, index=False):
-    put_bytes(path, df.to_csv(index=index).encode("utf-8"))
 
 
 # ----------------------- datos -----------------------
@@ -243,7 +246,6 @@ print("Calibración:", calib)
 # ----------------------- métricas a nivel valor -----------------------
 report = classification_report(y, oof_pred, target_names=labels, output_dict=True, zero_division=0)
 cm = confusion_matrix(y, oof_pred, labels=list(range(K)))
-cm_df = pd.DataFrame(cm, index=["real_" + l for l in labels], columns=["pred_" + l for l in labels])
 value_level = {
     "accuracy": float(accuracy_score(y, oof_pred)),
     "macro_f1": float(f1_score(y, oof_pred, average="macro")),
@@ -368,7 +370,7 @@ config = {
     "theta": theta_star,
     "column_sample_size": COL_SAMPLE_SIZE,
     "feature_module": "pii_content_features",
-    "model_file": "content_model.joblib",
+    "model_file": "model.joblib",
     "libs": {
         "python": platform.python_version(), "sklearn": sklearn.__version__,
         "numpy": np.__version__, "scipy": scipy.__version__,
@@ -399,17 +401,15 @@ metrics = {
 }
 
 # ----------------------- guardar en el managed folder -----------------------
+# Solo se publican dos artefactos: el bundle del modelo y el reporte.
+# La configuración (labels, temperature, tau, theta, versiones) viaja dentro
+# del bundle para que el motor no dependa de archivos auxiliares.
+bundle = dict(config)
+bundle["model"] = final
+bundle["classes"] = labels          # alias que usa ModelRecognizer
 buf = io.BytesIO()
-joblib.dump(final, buf, compress=3)
-put_bytes("content_model.joblib", buf.getvalue())
-put_bytes("pii_content_features.py", inspect.getsource(pcf).encode("utf-8"))
-put_json("config.json", config)
-put_json("metrics.json", metrics)
-put_df("classification_report.csv", pd.DataFrame(report).T, index=True)
-put_df("confusion_matrix.csv", cm_df, index=True)
-put_df("column_level_grid.csv", grid)
-put_df("top_features.csv", top_feat)
-put_df("oof_errors.csv", err)
+joblib.dump(bundle, buf, compress=3)
+put_bytes("model.joblib", buf.getvalue())
 
 try:
     import matplotlib
@@ -430,8 +430,249 @@ try:
     png = io.BytesIO()
     fig.savefig(png, format="png", dpi=130)
     plt.close(fig)
-    put_bytes("confusion_matrix.png", png.getvalue())
+    cm_b64 = base64.b64encode(png.getvalue()).decode("ascii")
 except Exception as e:
     print("No se generó el PNG de la matriz de confusión: %s" % e)
+    cm_b64 = None
+
+
+# ----------------------- reporte HTML consolidado -----------------------
+def _fmt(v, fmt=".3f"):
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return "—"
+    if isinstance(v, (int, np.integer)):
+        return "{:,}".format(int(v))
+    if isinstance(v, (float, np.floating)):
+        return format(float(v), fmt)
+    return html.escape(str(v))
+
+
+def _img_card(title, b64_str, subtitle=""):
+    if not b64_str:
+        return '<div class="card plot-card"><h3>%s</h3><p class="muted">Sin datos suficientes</p></div>' % html.escape(title)
+    sub_html = '<p class="muted">%s</p>' % html.escape(subtitle) if subtitle else ""
+    return ('<div class="card plot-card"><h3>%s</h3>%s'
+            '<img src="data:image/png;base64,%s" alt="%s"></div>'
+            % (html.escape(title), sub_html, b64_str, html.escape(title)))
+
+
+def build_html_report():
+    # KPI del nivel columna en la pureza de selección
+    col_sel_row = grid[(grid["tau"] == tau_star) & (grid["theta"] == theta_star) &
+                       (grid["purity"] == PURITY_FOR_SELECTION)].iloc[0]
+
+    ds_rows = [
+        ("Dataset de entrada", "<code>%s</code>" % html.escape(INPUT_DATASET)),
+        ("Filas crudas", _fmt(n_raw)),
+        ("Filas tras deduplicar", _fmt(n_dedup)),
+        ("Filas usadas en entrenamiento", _fmt(n)),
+        ("Columnas (valor, tipo)", "<code>%s</code>, <code>%s</code>" % (html.escape(VALUE_COL), html.escape(TYPE_COL))),
+        ("Clases", ", ".join(html.escape(l) for l in labels)),
+        ("Valores canónicos en >1 clase", _fmt(n_conflicts)),
+    ]
+    ds_html = "".join("<tr><td>%s</td><td class='num'>%s</td></tr>" % (k, v) for k, v in ds_rows)
+
+    cls_html = ""
+    for lab in labels:
+        r = report[lab]
+        cls_html += (
+            "<tr><td><strong>%s</strong></td>"
+            "<td class='num'>%s</td><td class='num'>%s</td><td class='num'>%s</td>"
+            "<td class='num'>%s</td><td class='num'>%s</td></tr>"
+            % (html.escape(lab), _fmt(r.get("precision")), _fmt(r.get("recall")),
+               _fmt(r.get("f1-score")), _fmt(int(r.get("support") or 0)), _fmt(class_counts.get(lab)))
+        )
+    cls_html += (
+        "<tr><td><strong>macro avg</strong></td>"
+        "<td class='num'>%s</td><td class='num'>%s</td><td class='num'><strong>%s</strong></td>"
+        "<td class='num'>%s</td><td class='num'>%s</td></tr>"
+        % (_fmt(report["macro avg"].get("precision")), _fmt(report["macro avg"].get("recall")),
+           _fmt(report["macro avg"].get("f1-score")), _fmt(int(report["macro avg"].get("support") or 0)), _fmt(n))
+    )
+    cls_html += (
+        "<tr><td><strong>weighted avg</strong></td>"
+        "<td class='num'>%s</td><td class='num'>%s</td><td class='num'><strong>%s</strong></td>"
+        "<td class='num'>%s</td><td class='num'>%s</td></tr>"
+        % (_fmt(report["weighted avg"].get("precision")), _fmt(report["weighted avg"].get("recall")),
+           _fmt(report["weighted avg"].get("f1-score")), _fmt(int(report["weighted avg"].get("support") or 0)), _fmt(n))
+    )
+
+    # Grilla a nivel columna (todas las combinaciones, ordenada por desempeño)
+    grid_sorted = grid.sort_values(["purity", "macro_f1"], ascending=[False, False])
+    grid_html = ""
+    for _, r in grid_sorted.iterrows():
+        chosen = (r["tau"] == tau_star) and (r["theta"] == theta_star) and (r["purity"] == PURITY_FOR_SELECTION)
+        style = " style='background:#eff6ff;font-weight:600;'" if chosen else ""
+        recalls = "".join("<td class='num'>%s</td>" % _fmt(r.get("recall_" + l)) for l in labels if l != OTRO_LABEL)
+        grid_html += (
+            "<tr%s><td class='num'>%s</td><td class='num'>%s</td><td class='num'>%s</td>"
+            "<td class='num'>%s</td><td class='num'>%s</td>%s</tr>"
+            % (style, _fmt(r["tau"], ".2f"), _fmt(r["theta"], ".2f"), _fmt(r["purity"], ".1f"),
+               _fmt(r["macro_f1"]), _fmt(r["otro_fpr"], ".4f"), recalls)
+        )
+    recall_cols = "".join("<th class='num'>Recall %s</th>" % html.escape(l) for l in labels if l != OTRO_LABEL)
+
+    # Top features por clase
+    feat_html = ""
+    for lab in labels:
+        sub = top_feat[top_feat["class"] == lab].head(10)
+        feat_html += "<tr><td colspan='3' style='background:#f1f5f9;font-weight:600;'>%s</td></tr>" % html.escape(lab)
+        feat_html += "".join(
+            "<tr><td><code>%s</code></td><td class='num'>%s</td><td>%s</td></tr>"
+            % (html.escape(str(r["feature"])), _fmt(r["weight"], "+.4f"), html.escape(lab))
+            for _, r in sub.iterrows()
+        )
+
+    err_html = ""
+    for _, r in err.head(50).iterrows():
+        err_html += (
+            "<tr><td><code>%s</code></td><td>%s</td><td>%s</td>"
+            "<td class='num'>%s</td><td class='num'>%s</td></tr>"
+            % (html.escape(str(r["value"])), html.escape(str(r["true"])), html.escape(str(r["pred"])),
+               _fmt(r["p_pred"]), _fmt(r["p_true"]))
+        )
+
+    raw_json = html.escape(json.dumps({"config": config, "metrics": metrics}, indent=2,
+                                      ensure_ascii=False, default=_json_default))
+
+    return """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reporte Modelo de Contenido — {created}</title>
+<style>
+  :root {{ --bg:#f8fafc; --card:#fff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b; --primary:#1d4ed8; --accent:#eff6ff; }}
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; padding:24px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.45; font-size:14px; }}
+  .container {{ max-width:1360px; margin:0 auto; }}
+  header {{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px 24px; margin-bottom:20px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; }}
+  header h1 {{ margin:0 0 6px 0; font-size:20px; }}
+  .badges {{ display:flex; flex-wrap:wrap; gap:8px; }}
+  .badge {{ background:var(--accent); color:var(--primary); border:1px solid #bfdbfe; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }}
+  .kpi-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:20px; }}
+  .kpi {{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }}
+  .kpi .label {{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }}
+  .kpi .val {{ font-size:22px; font-weight:700; margin-top:4px; }}
+  .kpi .sub {{ font-size:12px; color:var(--muted); margin-top:2px; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px 20px; margin-bottom:20px; }}
+  .card h2 {{ margin:0 0 12px 0; font-size:16px; border-bottom:1px solid var(--border); padding-bottom:8px; }}
+  .card h3 {{ margin:0 0 8px 0; font-size:14px; }}
+  .muted {{ color:var(--muted); font-size:12.5px; margin:0 0 10px 0; }}
+  .plots-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:16px; margin-bottom:20px; }}
+  .plot-card {{ text-align:center; margin-bottom:0; }}
+  .plot-card img {{ max-width:100%; height:auto; border-radius:6px; }}
+  .two-col {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(460px,1fr)); gap:16px; }}
+  .table-wrap {{ overflow:auto; max-height:460px; border:1px solid var(--border); border-radius:8px; }}
+  table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+  th,td {{ padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }}
+  th {{ background:#f1f5f9; font-weight:600; position:sticky; top:0; z-index:1; }}
+  tr:hover td {{ background:#f8fafc; }}
+  td.num,th.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
+  code {{ background:#f1f5f9; padding:2px 5px; border-radius:4px; font-size:12px; }}
+  details summary {{ cursor:pointer; font-weight:600; color:var(--primary); padding:6px 0; }}
+  pre {{ background:#0f172a; color:#e2e8f0; padding:14px; border-radius:8px; overflow-x:auto; font-size:12px; max-height:480px; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>Reporte de Entrenamiento — Modelo de Contenido PII</h1>
+      <p class="muted" style="margin:0;">Dataset: <code>{input_dataset}</code> &rarr; Managed Folder: <code>{output_folder}</code> &nbsp;|&nbsp; Entrenado: <strong>{created}</strong></p>
+    </div>
+    <div class="badges">
+      <span class="badge">Versión: {model_version}</span>
+      <span class="badge">TF-IDF char + word + shape</span>
+      <span class="badge">Regresión logística (C={C})</span>
+      <span class="badge">StratifiedGroupKFold: {n_splits} folds</span>
+      <span class="badge">tau = {tau:.2f} | theta = {theta:.2f}</span>
+    </div>
+  </header>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="label">Filas utilizadas</div><div class="val">{n_rows}</div><div class="sub">de {n_raw} crudas | {n_classes} clases</div></div>
+    <div class="kpi"><div class="label">Macro-F1 (valor, OOF)</div><div class="val">{macro_f1}</div><div class="sub">weighted-F1: {weighted_f1}</div></div>
+    <div class="kpi"><div class="label">Macro-F1 con ruido</div><div class="val">{macro_f1_noise}</div><div class="sub">typos, truncado, duplicado (p = {noise_p})</div></div>
+    <div class="kpi"><div class="label">Accuracy (valor, OOF)</div><div class="val">{accuracy}</div><div class="sub">temperatura T = {temperature:.3f}</div></div>
+    <div class="kpi"><div class="label">Calibración ECE</div><div class="val">{ece_before} &rarr; {ece_after}</div><div class="sub">LogLoss: {ll_before} &rarr; {ll_after}</div></div>
+    <div class="kpi"><div class="label">Columna (pureza {purity:.1f})</div><div class="val">{col_f1}</div><div class="sub">macro-F1 | FPR otro: {otro_fpr}</div></div>
+  </div>
+
+  <div class="card"><h2>1. Resumen del Dataset</h2>
+    <div class="table-wrap"><table><thead><tr><th>Elemento</th><th class="num">Valor</th></tr></thead><tbody>{ds_html}</tbody></table></div>
+    <p class="muted" style="margin-top:10px;">Esquema de CV: {cv_scheme}. Grupos: {n_groups:,} ({split_pct:.1f}% de filas en grupos partidos).</p>
+  </div>
+
+  <div class="card"><h2>2. Métricas a Nivel Valor (Out-Of-Fold)</h2>
+    <p class="muted">Predicciones fuera de muestra con <code>argmax</code> de <code>predict_proba</code>. Macro-F1 = {macro_f1} | con ruido = {macro_f1_noise}.</p>
+    <div class="table-wrap"><table><thead><tr><th>Clase</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">F1</th><th class="num">Support (OOF)</th><th class="num">Filas dataset</th></tr></thead><tbody>{cls_html}</tbody></table></div>
+  </div>
+
+  <div class="plots-grid">
+    {cm_card}
+  </div>
+
+  <div class="card"><h2>3. Simulación a Nivel Columna (tau &times; theta)</h2>
+    <p class="muted">Muestreo de {col_sample} valores por columna y {cols_per_class} columnas por clase. Selección con pureza {purity:.1f} y FPR de "otro" &le; {max_fpr:.3f}; resaltada la combinación elegida (<strong>tau = {tau:.2f}, theta = {theta:.2f}</strong>).</p>
+    <div class="table-wrap"><table><thead><tr><th class="num">tau</th><th class="num">theta</th><th class="num">pureza</th><th class="num">Macro-F1</th><th class="num">FPR otro</th>{recall_cols}</tr></thead><tbody>{grid_html}</tbody></table></div>
+  </div>
+
+  <div class="card"><h2>4. Errores Más Confiados en OOF (Top 50)</h2>
+    <p class="muted">Errores con mayor probabilidad predicha; candidatos a revisar etiqueta.</p>
+    <div class="table-wrap"><table><thead><tr><th>Valor</th><th>Real</th><th>Predicho</th><th class="num">p(pred)</th><th class="num">p(real)</th></tr></thead><tbody>{err_html}</tbody></table></div>
+  </div>
+
+  <div class="card"><h2>5. Top Features por Clase (modelo final)</h2>
+    <div class="table-wrap"><table><thead><tr><th>Feature</th><th class="num">Peso</th><th>Clase</th></tr></thead><tbody>{feat_html}</tbody></table></div>
+  </div>
+
+  <div class="card"><h2>6. Configuración, Versiones y Métricas en JSON</h2>
+    <details><summary>Ver JSON completo (config + metrics)</summary><pre>{raw_json}</pre></details>
+  </div>
+</div>
+</body>
+</html>
+""".format(
+        created=html.escape(config["created_utc"]),
+        input_dataset=html.escape(INPUT_DATASET),
+        output_folder=html.escape(OUTPUT_FOLDER),
+        model_version=html.escape(MODEL_VERSION),
+        C=C, n_splits=N_SPLITS,
+        tau=tau_star, theta=theta_star,
+        n_rows=_fmt(n), n_raw=_fmt(n_raw), n_classes=K,
+        macro_f1=_fmt(value_level["macro_f1"]),
+        weighted_f1=_fmt(value_level["weighted_f1"]),
+        macro_f1_noise=_fmt(value_level["macro_f1_with_noise"]),
+        noise_p=_fmt(STRESS_NOISE_P, ".2f"),
+        accuracy=_fmt(value_level["accuracy"]),
+        temperature=T,
+        ece_before=_fmt(calib["ece_before"], ".2%"),
+        ece_after=_fmt(calib["ece_after"], ".2%"),
+        ll_before=_fmt(calib["logloss_before"], ".4f"),
+        ll_after=_fmt(calib["logloss_after"], ".4f"),
+        purity=PURITY_FOR_SELECTION,
+        col_f1=_fmt(col_sel_row["macro_f1"]),
+        otro_fpr=_fmt(col_sel_row["otro_fpr"], ".4f"),
+        ds_html=ds_html,
+        cv_scheme=html.escape(metrics["cv"]["scheme"]),
+        n_groups=n_groups,
+        split_pct=metrics["cv"]["rows_in_split_groups_pct"],
+        cls_html=cls_html,
+        cm_card=_img_card("Matriz de Confusión (valor, OOF)",
+                          cm_b64, "Normalizada por fila; entre paréntesis el conteo absoluto"),
+        col_sample=COL_SAMPLE_SIZE,
+        cols_per_class=COLS_PER_CLASS,
+        max_fpr=MAX_OTRO_FPR,
+        recall_cols=recall_cols,
+        grid_html=grid_html,
+        err_html=err_html or "<tr><td colspan='5' class='muted'>Sin errores</td></tr>",
+        feat_html=feat_html,
+        raw_json=raw_json,
+    )
+
+
+put_bytes("report.html", build_html_report().encode("utf-8"))
+cleanup_output_folder({"model.joblib", "report.html"})
 
 print("Listo en %.0fs. Artefactos guardados en el folder '%s'." % (time.time() - t0, OUTPUT_FOLDER))

@@ -1,0 +1,30 @@
+# Catálogo de valores para la entidad estado_civil
+soltero
+soltera
+soltero(a)
+casado
+casada
+casado(a)
+viudo
+viuda
+viudo(a)
+divorciado
+divorciada
+divorciado(a)
+union libre
+concubinato
+separado
+separada
+sociedad conyugal
+separacion de bienes
+single
+married
+divorced
+widowed
+cohabiting
+s
+c
+v
+d
+u
+ul

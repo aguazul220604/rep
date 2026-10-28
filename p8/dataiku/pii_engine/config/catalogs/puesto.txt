@@ -1,0 +1,84 @@
+# Catálogo de valores para la entidad puesto / ocupación
+director
+directora
+director general
+subdirector
+subdirectora
+gerente
+subgerente
+ejecutivo
+ejecutiva
+ejecutivo de cuenta
+ejecutivo bancario
+ejecutivo sr
+ejecutivo jr
+analista
+analista sr
+analista jr
+coordinador
+coordinadora
+supervisor
+supervisora
+jefe
+jefa
+lider de proyecto
+especialista
+consultor
+consultora
+asesor
+asesora
+contador
+contadora
+abogado
+abogada
+ingeniero
+ingeniera
+arquitecto
+arquitecta
+medico
+doctora
+doctor
+profesor
+profesora
+docente
+administrador
+administradora
+auxiliar
+asistente
+secretaria
+secretario
+recepcionista
+cajero
+cajera
+vendedor
+vendedora
+comerciante
+empresario
+empresaria
+independiente
+empleado
+empleada
+obrero
+tecnico
+tecnica
+operador
+chofer
+estudiante
+pensionado
+jubilado
+ama de casa
+hogar
+desempleado
+servidor publico
+funcionario
+vicepresidente
+vp
+svp
+ceo
+cfo
+cto
+manager
+senior manager
+officer
+associate
+analyst

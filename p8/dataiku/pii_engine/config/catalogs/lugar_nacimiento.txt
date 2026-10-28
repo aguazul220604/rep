@@ -1,0 +1,176 @@
+# Catálogo de lugares de nacimiento: entidades federativas de México,
+# abreviaturas oficiales/comunes y países/ISO alpha-3 frecuentes.
+# La comparación normaliza mayúsculas y acentos (DictionaryRecognizer).
+
+# --- México: nombres completos ---
+aguascalientes
+baja california
+baja california sur
+campeche
+chiapas
+chihuahua
+ciudad de mexico
+coahuila
+coahuila de zaragoza
+colima
+durango
+guanajuato
+guerrero
+hidalgo
+jalisco
+mexico
+estado de mexico
+michoacan
+michoacan de ocampo
+morelos
+nayarit
+nuevo leon
+oaxaca
+puebla
+queretaro
+quintana roo
+san luis potosi
+sinaloa
+sonora
+tabasco
+tamaulipas
+tlaxcala
+veracruz
+veracruz de ignacio de la llave
+yucatan
+zacatecas
+
+# --- México: ciudades y localidades frecuentes ---
+acapulco
+cancun
+celaya
+ciudad juarez
+ciudad de mexico
+cuernavaca
+culiacan
+chihuahua
+guadalajara
+hermosillo
+leon
+merida
+mexicali
+monterrey
+morelia
+oaxaca
+pachuca
+puebla
+queretaro
+saltillo
+san luis potosi
+tampico
+tijuana
+toluca
+torreon
+tuxtla gutierrez
+veracruz
+villahermosa
+xalapa
+
+# --- México: abreviaturas ---
+ags
+bc
+b c
+bcs
+camp
+chis
+chih
+cdmx
+df
+coah
+col
+dgo
+gto
+gro
+hgo
+jal
+mex
+mich
+mor
+nay
+nl
+n l
+oax
+pue
+qro
+qroo
+slp
+sin
+son
+tab
+tamps
+tlax
+ver
+yuc
+zac
+
+# --- Países / ISO alpha-3 frecuentes ---
+alemania
+argentina
+belice
+bolivia
+brasil
+canada
+chile
+china
+colombia
+corea del sur
+costa rica
+cuba
+ecuador
+el salvador
+espana
+estados unidos
+filipinas
+francia
+guatemala
+honduras
+india
+italia
+japon
+nicaragua
+panama
+paraguay
+peru
+portugal
+reino unido
+republica dominicana
+rusia
+uruguay
+venezuela
+mex
+usa
+can
+gtm
+blz
+slv
+hnd
+nic
+cri
+pan
+cub
+dom
+col
+ven
+ecu
+per
+bol
+chl
+arg
+ury
+bra
+prt
+esp
+fra
+deu
+ita
+gbr
+rus
+chn
+jpn
+ind
+phl

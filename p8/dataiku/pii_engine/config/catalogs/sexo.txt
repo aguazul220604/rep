@@ -1,0 +1,16 @@
+# Catálogo de valores para la entidad sexo / género
+h
+m
+f
+hombre
+mujer
+masculino
+femenino
+male
+female
+masc
+fem
+no binario
+indistinto
+no especificado
+x

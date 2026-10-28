@@ -1,0 +1,464 @@
+# Configuración de las 40 entidades PII del catálogo (Sección 11 de la documentación)
+#
+# Grupos:
+#   A -> Regex + validador fuerte (11 entidades)
+#   B -> Regex débil o dependiente del contexto (20 entidades)
+#   C -> Diccionario de valores (4 entidades)
+#   D -> Modelo de contenido (4 entidades)
+#   E -> Revisión humana / otro_pii (1 entidad)
+#
+# Modos de contexto (context_mode):
+#   none        -> no necesita contexto de nombre (p. ej. correo, ip)
+#   optional    -> puede declarar PII por contenido solo, el nombre refuerza
+#   recommended -> si el nombre no aporta contexto, el score se penaliza
+#   required    -> requiere que el nombre sugiera la entidad o tenga palabras de contexto
+#   name_only   -> solo dispara si el nombre fue clasificado en esta entidad; contenido solo valida tipo
+
+version: "1.0"
+
+entities:
+  # ===========================================================================
+  # GRUPO A — Regex + validador (señal fuerte, 11 entidades)
+  # ===========================================================================
+  curp:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[A-Z][AEIOUX][A-Z]{2}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[HMX](?:AS|BC|BS|CC|CL|CM|CS|CH|DF|DG|GT|GR|HG|JC|MC|MN|MS|NT|NL|OC|PL|QT|QR|SP|SL|SR|TC|TS|TL|VZ|YN|ZS|NE)[B-DF-HJ-NP-TV-Z]{3}[A-Z\d]\d$'
+    validator: curp_checksum
+    context_words: [curp, clave unica, poblacion, renapo]
+    context_mode: optional
+    min_match_rate: 0.50
+
+  rfc:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[A-ZÑ&]{3,4}-?\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])-?[A-Z\d]{3}$'
+    validator: rfc_checksum
+    context_words: [rfc, fiscal, contribuyente, homoclave, sat]
+    context_mode: optional
+    min_match_rate: 0.55
+
+  clave_elector:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[A-Z]{6}\d{6}(?:0[1-9]|[12]\d|3[0-2]|8[78])[HMX]\d{3}$'
+    validator: clave_elector_check
+    context_words: [clave elector, cve elector, clv elector, elector, ine, ife]
+    context_mode: optional
+    min_match_rate: 0.55
+
+  clabe:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^\d{18}$'
+    validator: clabe_checksum
+    context_words: [clabe, interbancaria, cuentaclabe, clabe dest]
+    context_mode: optional
+    min_match_rate: 0.60
+
+  iban:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$'
+    validator: iban_mod97
+    context_words: [iban, intl account]
+    context_mode: optional
+    min_match_rate: 0.60
+
+  tarjeta:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^(?:\d[ -]*?){13,19}$'
+    validator: luhn_card
+    context_words: [tarjeta, card, crd, plastico, pan, nucc, tdc, tdd]
+    negative_context_words: [clabe, nss, cuenta, contrato, cliente]
+    context_mode: optional
+    min_match_rate: 0.65
+
+  correo:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$'
+    validator: email_domain
+    context_words: [correo, email, mail, e mail]
+    context_mode: none
+    min_match_rate: 0.50
+
+  ip:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^(?:(?:\d{1,3}\.){3}\d{1,3}|(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4})$'
+    validator: ip_address
+    context_words: [ip, ipv4, ipv6, ip maquina, ip isp, ip pc]
+    context_mode: none
+    min_match_rate: 0.60
+
+  coordenadas:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^[+-]?\d{1,3}\.\d{3,10}(?:\s*[,;/\s]\s*[+-]?\d{1,3}\.\d{3,10})?$'
+    validator: coordenadas_range
+    context_words: [latitud, longitud, latitude, longitude, coordenad, geoloc, gps, lat, lon, lng, utm]
+    negative_context_words: [saldo, monto, importe, tasa, interes, porcentaje, tipo cambio]
+    context_mode: recommended
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  ssn:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^\d{3}-\d{2}-\d{4}$'
+    validator: ssn_rules
+    context_words: [ssn, social security, seguro social eua]
+    context_mode: optional
+    min_match_rate: 0.60
+
+  nss:
+    classification: 1
+    group: A
+    strategy: regex
+    patterns:
+      - '^\d{11}$'
+    validator: nss_checksum
+    context_words: [nss, imss, seg cli, seguridad social, afiliacion]
+    context_mode: recommended
+    min_match_rate: 0.65
+
+  # ===========================================================================
+  # GRUPO B — Regex débil o dependiente del contexto (20 entidades)
+  # ===========================================================================
+  telefono:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^(?:\+?52\s*)?(?:\(?\d{2,3}\)?[\s\-]?)?\d{3,4}[\s\-]?\d{4}$'
+    validator: telefono_rules
+    context_words: [telefono, tel, celular, cel, movil, phone, whatsapp, fax, numtel, numcel, lada]
+    negative_context_words: [extension, ext, extn, folio, cuenta, cliente, contrato, geid]
+    context_mode: recommended
+    min_match_rate: 0.65
+
+  codigo_postal:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{5}$'
+    validator: codigo_postal_range
+    context_words: [codigo postal, cod postal, postal code, cpl, cp, zip, codigopostal]
+    context_mode: required
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  fecha_nacimiento:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|\d{8})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$'
+    validator: fecha_nacimiento_plausible
+    context_words: [nacim, fecnac, brthdt, birth dt, birth date, dob, fecha nac]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  fecha_vencimiento:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^(?:(?:0[1-9]|1[0-2])[/\-](?:\d{2}|\d{4})|\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4})$'
+    validator: fecha_vencimiento_plausible
+    context_words: [expry, exp dt, venc, vencimiento, fec vig, vigencia, expiracion]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  pasaporte:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Z]{1,2}\d{7,9}$'
+    context_words: [pasaporte, passport]
+    context_mode: recommended
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  licencia_conducir:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Z0-9\-]{6,15}$'
+    context_words: [licencia conducir, licencia manejo, lic cond, lic manejo, driver license, driver licence]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  soeid:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z]{2}\d{5}$'
+    context_words: [soeid, soe id, usuario soe]
+    context_mode: recommended
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  geid:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{10}$'
+    context_words: [geid, ge id]
+    context_mode: required
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  cic:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{9}$'
+    context_words: [cic, cic ine, cic ife]
+    context_mode: required
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  ocr:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{12,13}$'
+    context_words: [ocr, ocr ine, ocr ife]
+    context_mode: required
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  cuenta:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{6,16}$'
+    context_words: [cuenta, acct, account, acnt, cta, reln, inversion, num inversion]
+    negative_context_words: [actacons, clabe, contable]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  cliente:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9\-]{4,20}$'
+    context_words: [cliente, clien, clnt, cust, ctem, ctenum, gfcid, user ref, num cte]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  contrato:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9\-]{4,24}$'
+    context_words: [contrato, contrat, contract, cto, ctos, num contras, num contorig]
+    negative_context_words: [creactecto]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  nomina:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9\-]{4,15}$'
+    context_words: [nomina, numnom, numemp, empleado, vendnomi]
+    negative_context_words: [nombre, name]
+    context_mode: required
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  cvv:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{3,4}$'
+    context_words: [cvv, cvc, cvv2, cvc2, csc, security code, codigo seguridad tarj]
+    context_mode: name_only
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  pin_nip:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^\d{4,6}$'
+    context_words: [nip, pin]
+    context_mode: name_only
+    min_match_rate: 0.70
+    allow_in_free_text: false
+
+  saldo:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[+-]?\d+(?:\.\d+)?$'
+    context_words: [saldo, sdo, ingreso, bal, balance, capital, curr bal, tot prin, impcasa, limite, lmt, capvig]
+    context_mode: name_only
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  credito:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9.\-]{3,24}$'
+    context_words: [credito, cred, linea, line id, linnum, loan]
+    negative_context_words: [credencial]
+    context_mode: name_only
+    min_match_rate: 0.65
+    allow_in_free_text: false
+
+  biometrico:
+    classification: 1
+    group: B
+    strategy: regex
+    patterns:
+      - '^[A-Za-z0-9+/=\-_]{32,}$'
+    context_words: [huella, biometrico, biometria, facial, iris, minutia]
+    context_mode: name_only
+    min_match_rate: 0.50
+    allow_in_free_text: false
+
+  lugar_nacimiento:
+    classification: 1
+    group: B
+    strategy: dictionary
+    catalog: catalogs/lugar_nacimiento.txt
+    context_words: [lugar nac, pais nac, ciudad nac, entidad nac, edo nac, estado nac, municipio nac, birth place, place of birth]
+    context_mode: required
+    min_match_rate: 0.55
+
+  # ===========================================================================
+  # GRUPO C — Diccionario de valores (4 entidades)
+  # ===========================================================================
+  nacionalidad:
+    classification: 1
+    group: C
+    strategy: dictionary
+    catalog: catalogs/nacionalidad.txt
+    context_words: [nacionalidad, nationality, citizenship, ciudadania, nacion]
+    context_mode: recommended
+    min_match_rate: 0.65
+
+  sexo:
+    classification: 1
+    group: C
+    strategy: dictionary
+    catalog: catalogs/sexo.txt
+    context_words: [sexo, genero, gndr, sex, gender]
+    context_mode: recommended
+    min_match_rate: 0.75
+
+  estado_civil:
+    classification: 1
+    group: C
+    strategy: dictionary
+    catalog: catalogs/estado_civil.txt
+    context_words: [estado civil, edo civil, est civil, marital]
+    context_mode: recommended
+    min_match_rate: 0.65
+
+  puesto:
+    classification: 1
+    group: C
+    strategy: dictionary
+    catalog: catalogs/puesto.txt
+    context_words: [puesto, ocupacion, cargo, rol, manager, ejecutivo, profesion]
+    context_mode: recommended
+    min_match_rate: 0.55
+    allow_substring_match: true
+
+  # ===========================================================================
+  # GRUPO D — Modelo de contenido (4 entidades)
+  # ===========================================================================
+  nombre:
+    classification: 1
+    group: D
+    strategy: model
+    model: models/content/model.joblib
+    context_words: [nombre, name, nm, nomcte, beneficiario, titular, ordenante, aval, deudor, usuario, nom]
+    negative_context_words: [apellido, apepat, apemat, empresa, razon social, calle, colonia, nomina]
+    context_mode: recommended
+    min_match_rate: 0.50
+
+  apellido:
+    classification: 1
+    group: D
+    strategy: model
+    model: models/content/model.joblib
+    context_words: [apellido, ap paterno, ap materno, a paterno, a materno, apepat, apemat, surname, last name]
+    context_mode: recommended
+    min_match_rate: 0.50
+
+  direccion:
+    classification: 1
+    group: D
+    strategy: model
+    model: models/content/model.joblib
+    context_words: [direccion, domicil, dom, dir, calle, street, addr, avenida, blvd, colonia, nomcol, asentamiento, municipio, alcaldia, delegacion, localidad, ciudad, estado, entidad, pais]
+    negative_context_words: [estado civil, lugar nacimiento, nacim]
+    context_mode: recommended
+    min_match_rate: 0.50
+
+  empresa:
+    classification: 1
+    group: D
+    strategy: model
+    model: models/content/model.joblib
+    context_words: [empresa, razon social, empleador, compania, negafiliado, dealer, oribnk, recvbnk]
+    context_mode: recommended
+    min_match_rate: 0.50
+
+  # ===========================================================================
+  # GRUPO E — Validación humana (1 entidad / Clasificación 2)
+  # ===========================================================================
+  otro_pii:
+    classification: 2
+    group: E
+    strategy: none
+    needs_review: true

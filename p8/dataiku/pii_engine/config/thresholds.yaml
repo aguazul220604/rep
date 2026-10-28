@@ -1,0 +1,50 @@
+# Umbrales y pesos de fusión y muestreo del motor PII (Sección 5.5 y 6)
+version: "1.0"
+
+sampling:
+  default_sample_size: 2000
+  seed: 42
+  free_text_mean_length: 48.0
+  free_text_mean_tokens: 6.5
+
+name_models:
+  binary_threshold: 0.409
+  high_confidence_name_score: 0.80
+  entity_min_confidence: 0.45
+
+name_resolution:
+  # El binario corre para todas las columnas; el modelo de entidad solo para
+  # columnas que el binario marca como PII y que no resuelve el fast path regex.
+  binary_gate_enabled: true
+  fast_path_enabled: true
+  fast_path_min_confidence: 0.85
+  cache_size: 4096
+  # Entidades con regla de nombre inequívoca: se evita el modelo de entidad.
+  fast_path_entities:
+    curp: 0.99
+    rfc: 0.97
+    nss: 0.95
+    ssn: 0.97
+    correo: 0.98
+    clave_elector: 0.96
+    pasaporte: 0.94
+    licencia_conducir: 0.94
+    iban: 0.95
+    clabe: 0.95
+    cvv: 0.95
+    coordenadas: 0.93
+
+fusion:
+  # Ecuación logit calibrada:
+  # prob_pii = sigmoid(w0 + w1 * logit(score_nombre) + w2 * logit(match_rate_ajustado) + w3 * bonus_validador)
+  w0: -0.25
+  w1: 0.55
+  w2: 0.65
+  w3: 0.90
+  epsilon: 0.0001
+  min_sample_for_full_weight: 50
+  pii_decision_threshold: 0.50
+  # Si el contenido está vacío (sample_size == 0), factor de amortiguamiento sobre score_nombre
+  empty_content_damping: 0.72
+  # Si el nombre dijo PII pero ninguna entidad validó en el contenido
+  unconfirmed_name_damping: 0.35

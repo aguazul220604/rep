@@ -344,5 +344,5 @@ class DataikuAdapter:
             info["model_version"] = version_getter() if callable(version_getter) else "unknown"
         except Exception as exc:
             info["status"] = "degraded"
-            info["error"] = type(exc).__name__
+            info["error"] = f"{type(exc).__name__}: {exc}"
         return info

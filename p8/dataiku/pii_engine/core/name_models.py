@@ -103,6 +103,49 @@ def _apply_temperature(proba: np.ndarray, temperature: float) -> np.ndarray:
     return q / q.sum(axis=1, keepdims=True)
 
 
+_LEGACY_ENTITY_CLASS = "HybridEntityClassifier"
+_LEGACY_ENTITY_SYMBOLS = {"HybridEntityClassifier": "HybridEntityClassifier", "_softmax_rows": "_softmax_rows"}
+_JOBLIB_LEGACY_LOCK = threading.Lock()
+
+
+def _is_legacy_entity_error(exc: BaseException) -> bool:
+    if _LEGACY_ENTITY_CLASS in str(exc):
+        return True
+    return isinstance(exc, ModuleNotFoundError)
+
+
+def _load_joblib_bundle(path: Path) -> Any:
+    import joblib
+
+    try:
+        return joblib.load(path)
+    except (AttributeError, ModuleNotFoundError) as exc:
+        if not _is_legacy_entity_error(exc):
+            raise
+
+        try:
+            import pii_entity_model
+        except Exception:
+            raise exc
+
+        from joblib import numpy_pickle
+
+        with _JOBLIB_LEGACY_LOCK:
+            original_find_class = numpy_pickle.NumpyUnpickler.find_class
+
+            def _find_class(unpickler, module, name):
+                target = _LEGACY_ENTITY_SYMBOLS.get(name)
+                if target is not None:
+                    return getattr(pii_entity_model, target)
+                return original_find_class(unpickler, module, name)
+
+            numpy_pickle.NumpyUnpickler.find_class = _find_class
+            try:
+                return joblib.load(path)
+            finally:
+                numpy_pickle.NumpyUnpickler.find_class = original_find_class
+
+
 class NameModelPredictor:
     """
     Gestiona la inferencia de los modelos de nombre (`model_binary_v1` y `model_entity_v1`).
@@ -155,8 +198,7 @@ class NameModelPredictor:
             p = p / "model.joblib"
         if not p.exists():
             return None
-        import joblib
-        loaded = joblib.load(p)
+        loaded = _load_joblib_bundle(p)
         if isinstance(loaded, dict):
             return loaded
         return {"model": loaded}

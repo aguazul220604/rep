@@ -257,7 +257,7 @@ Insertar después de `const color = action === 'approve' ? 'var(--ok)' : 'var(--
         <span>${esc(piiSummaryLine(pii))}</span>
       </div>
       ${pii && pii.status === 'ok' && Array.isArray(pii.columns) && pii.columns.length
-        ? `<details style="margin-bottom:12px;"><summary>PII details (${pii.columns.length} flagged)</summary>${piiDetailTableHTML(pii)}</details>`
+        ? `<details style="margin-bottom:12px;"><summary>PII details (${pii.columns.length} columns)</summary>${piiDetailTableHTML(pii)}</details>`
         : ''}`;
 ```
 

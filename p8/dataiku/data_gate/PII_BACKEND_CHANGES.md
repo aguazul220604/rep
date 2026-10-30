@@ -149,42 +149,41 @@ def _sanitize_pii_summary(raw):
     raw_columns = raw.get("columns")
     if not isinstance(raw_columns, list):
         raw_columns = []
+    valid_columns = [item for item in raw_columns if isinstance(item, dict)]
 
-    flagged = []
-    for item in raw_columns:
-        if not isinstance(item, dict):
-            continue
-        is_pii = bool(item.get("pii"))
-        needs_review = bool(item.get("needs_review"))
-        if not (is_pii or needs_review):
-            continue
-        flagged.append({
+    stored_columns = []
+    for item in valid_columns:
+        stored_columns.append({
             "column": str(item.get("column") or "")[:300],
-            "pii": is_pii,
+            "pii": bool(item.get("pii")),
             "prob_pii": _pii_float(item.get("prob_pii")),
             "entity": str(item.get("entity") or "")[:100],
             "prob_entity": _pii_float(item.get("prob_entity")),
             "evidence": str(item.get("evidence") or "")[:40],
             "match_rate": _pii_float(item.get("match_rate")),
             "sample_size": _pii_int(item.get("sample_size")),
-            "needs_review": needs_review,
+            "needs_review": bool(item.get("needs_review")),
             "classification": _pii_int(item.get("classification"), 1),
         })
-        if len(flagged) >= _PII_MAX_RECORD_COLUMNS:
+        if len(stored_columns) >= _PII_MAX_RECORD_COLUMNS:
             break
+
+    analyzed_columns = len(valid_columns) if valid_columns else _pii_int(raw.get("analyzed_columns"), 0)
+    pii_columns = (sum(1 for c in valid_columns if c.get("pii")) if valid_columns
+                   else _pii_int(raw.get("pii_columns"), 0))
+    needs_review = (sum(1 for c in valid_columns if c.get("needs_review")) if valid_columns
+                    else _pii_int(raw.get("needs_review"), 0))
 
     return {
         "status": "ok",
         "engine_version": str(raw.get("engine_version") or "")[:40],
         "model_version": str(raw.get("model_version") or "")[:300],
         "config_version": str(raw.get("config_version") or "")[:40],
-        "analyzed_columns": _pii_int(raw.get("analyzed_columns"), len(raw_columns)),
-        "pii_columns": _pii_int(raw.get("pii_columns"),
-                                sum(1 for c in raw_columns if isinstance(c, dict) and c.get("pii"))),
-        "needs_review": _pii_int(raw.get("needs_review"),
-                                 sum(1 for c in raw_columns if isinstance(c, dict) and c.get("needs_review"))),
-        "columns": flagged,
-        "truncated": len(flagged) >= _PII_MAX_RECORD_COLUMNS,
+        "analyzed_columns": analyzed_columns,
+        "pii_columns": pii_columns,
+        "needs_review": needs_review,
+        "columns": stored_columns,
+        "truncated": len(valid_columns) > _PII_MAX_RECORD_COLUMNS,
     }
 ```
 

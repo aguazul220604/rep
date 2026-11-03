@@ -75,6 +75,7 @@ def get_adapter() -> Any:
                 binary_folder=os.getenv("PII_BINARY_FOLDER", "model_binary_v1"),
                 entity_folder=os.getenv("PII_ENTITY_FOLDER", "model_entity_v1"),
                 content_folder=os.getenv("PII_CONTENT_FOLDER", "model_content_v1"),
+                model_filename=os.getenv("PII_MODEL_FILENAME", "model.pkl"),
                 max_read_rows=_MAX_READ_ROWS,
                 strict_models=True,
             )

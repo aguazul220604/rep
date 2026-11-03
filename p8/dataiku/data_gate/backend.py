@@ -239,10 +239,10 @@ def _get_pii_adapter():
     with _PII_ADAPTER_LOCK:
         if _PII_ADAPTER is None:
             _PII_ADAPTER = DataikuAdapter(
-                models_folder=os.environ.get("PII_MODELS_FOLDER", "pii_models"),
-                binary_model_path=os.environ.get("PII_BINARY_MODEL_PATH", "binary/model.pkl"),
-                entity_model_path=os.environ.get("PII_ENTITY_MODEL_PATH", "entity/model.pkl"),
-                content_model_path=os.environ.get("PII_CONTENT_MODEL_PATH", "content/model.pkl"),
+                binary_folder=os.environ.get("PII_BINARY_FOLDER", "model_binary_v1"),
+                entity_folder=os.environ.get("PII_ENTITY_FOLDER", "model_entity_v1"),
+                content_folder=os.environ.get("PII_CONTENT_FOLDER", "model_content_v1"),
+                model_filename=os.environ.get("PII_MODEL_FILENAME", "model.pkl"),
                 strict_models=True,
             )
         return _PII_ADAPTER

@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 
 from pii_engine.adapters.dataiku_adapter import DataikuAdapter, ModelArtifactError
+from pii_engine.core.name_models import NameModelPredictor
+from pii_engine.recognizers.model_recognizer import ContentModelLoader
 
 
 class _BinaryModel:
@@ -79,7 +81,7 @@ def _write_bundles(root: Path, content_version: str = "adapter-v1"):
     for directory in (binary_dir, entity_dir, content_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    joblib.dump({"model": _BinaryModel(), "threshold": 0.50}, binary_dir / "model.joblib")
+    joblib.dump({"model": _BinaryModel(), "threshold": 0.50}, binary_dir / "model.pkl")
     joblib.dump(
         {
             "model": _EntityModel(),
@@ -87,7 +89,7 @@ def _write_bundles(root: Path, content_version: str = "adapter-v1"):
             "temperature": 1.0,
             "min_confidence": 0.45,
         },
-        entity_dir / "model.joblib",
+        entity_dir / "model.pkl",
     )
     joblib.dump(
         {
@@ -99,7 +101,7 @@ def _write_bundles(root: Path, content_version: str = "adapter-v1"):
             "other_label": "otro",
             "model_version": content_version,
         },
-        content_dir / "model.joblib",
+        content_dir / "model.pkl",
     )
     return binary_dir, entity_dir, content_dir
 
@@ -108,13 +110,10 @@ class TestDataikuAdapter(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.binary_dir, self.entity_dir, self.content_dir = _write_bundles(self.root)
+        self.models_root = self.root / "pii_models"
+        self.binary_dir, self.entity_dir, self.content_dir = _write_bundles(self.models_root)
 
-        self.folders = {
-            "model_binary_v1": _FakeFolder(self.binary_dir),
-            "model_entity_v1": _FakeFolder(self.entity_dir),
-            "model_content_v1": _FakeFolder(self.content_dir),
-        }
+        self.folders = {"pii_models": _FakeFolder(self.models_root)}
         self.datasets = {
             "clientes": _FakeDataset(
                 pd.DataFrame({
@@ -133,6 +132,7 @@ class TestDataikuAdapter(unittest.TestCase):
         self.adapter = DataikuAdapter(cache_dir=self.root / "cache")
 
     def tearDown(self):
+        ContentModelLoader.clear_cache()
         self._dataiku_patch.stop()
         self.tmp.cleanup()
 
@@ -142,7 +142,34 @@ class TestDataikuAdapter(unittest.TestCase):
         health = self.adapter.health()
         self.assertEqual(health["status"], "ok")
         self.assertTrue(health["engine_ready"])
+        self.assertEqual(health["models_folder"], "pii_models")
+        self.assertEqual(health["model_files"]["binary"], "binary/model.pkl")
         self.assertIn("content:adapter-v1", health["model_version"])
+
+    def test_resolves_nested_local_paths(self):
+        self.assertEqual(
+            self.adapter.resolve_model_path("binary/model.pkl"),
+            self.binary_dir / "model.pkl",
+        )
+        self.assertEqual(
+            self.adapter.resolve_model_path("entity/model.pkl"),
+            self.entity_dir / "model.pkl",
+        )
+        self.assertEqual(
+            self.adapter.resolve_model_path("content/model.pkl"),
+            self.content_dir / "model.pkl",
+        )
+
+    def test_loaders_accept_directory_with_model_pkl(self):
+        predictor = NameModelPredictor(
+            binary_bundle=self.binary_dir,
+            entity_bundle=self.entity_dir,
+        )
+        self.assertIsNotNone(predictor.binary_bundle)
+        self.assertIsNotNone(predictor.entity_bundle)
+        artifact = ContentModelLoader.load(self.content_dir)
+        self.assertIsInstance(artifact, dict)
+        self.assertIn("model", artifact)
 
     def test_analyze_dataset_is_metadata_only(self):
         results = self.adapter.analyze_dataset("clientes")
@@ -161,19 +188,31 @@ class TestDataikuAdapter(unittest.TestCase):
         self.assertEqual({result.column for result in results}, {"nombre_cliente", "campo_x"})
 
     def test_downloads_model_when_folder_has_no_local_path(self):
-        blob = (self.content_dir / "model.joblib").read_bytes()
-        self.folders["model_content_v1"] = _FakeFolder(None, blob)
-        path = self.adapter.resolve_model_path("model_content_v1")
+        blob = (self.content_dir / "model.pkl").read_bytes()
+        self.folders["pii_models"] = _FakeFolder(None, blob)
+        path = self.adapter.resolve_model_path("content/model.pkl")
         self.assertTrue(path.exists())
         self.assertEqual(path.read_bytes(), blob)
 
     def test_missing_model_is_reported(self):
-        del self.folders["model_content_v1"]
+        del self.folders["pii_models"]
         with self.assertRaises(ModelArtifactError):
             self.adapter.build_analyzer()
         health = self.adapter.health()
         self.assertEqual(health["status"], "degraded")
         self.assertFalse(health["engine_ready"])
+
+    def test_health_reports_exception_detail(self):
+        def broken_factory(**kwargs):
+            raise RuntimeError("modelo roto")
+
+        adapter = DataikuAdapter(
+            models_folder=self.models_root,
+            analyzer_factory=broken_factory,
+        )
+        health = adapter.health()
+        self.assertEqual(health["status"], "degraded")
+        self.assertIn("RuntimeError: modelo roto", health["error"])
 
 
 if __name__ == "__main__":

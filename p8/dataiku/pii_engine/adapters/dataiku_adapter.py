@@ -2,18 +2,18 @@
 """
 Adaptador de despliegue para Dataiku DSS.
 
-Resuelve los managed folders de modelos (`model_binary_v1`, `model_entity_v1`,
-`model_content_v1`), construye un `PIIAnalyzer` y ofrece operaciones de alto
-nivel para la webapp:
+Resuelve los artefactos del managed folder `pii_models`:
+`binary/model.pkl`, `entity/model.pkl` y `content/model.pkl`. Construye un
+`PIIAnalyzer` y ofrece operaciones de alto nivel para la webapp:
 
   - `analyze_dataset(...)`: lee una muestra de un dataset del flow.
   - `analyze_dataframe(...)`: analiza un DataFrame ya cargado.
   - `analyze_file(...)`: analiza CSV/parquet subido por el usuario.
-  - `health()`: estado del motor y versión de modelos.
+  - `health()`: estado del motor y versi��n de modelos.
 
-El adaptador no registra ni devuelve valores de las muestras. Los managed
-folders pueden exponer una ruta local (`get_path`) o requerir descarga
-(`get_download_stream`); en este último caso el `model.joblib` se copia a un
+El adaptador no registra ni devuelve valores de las muestras. El managed
+folder puede exponer una ruta local (`get_path`) o requerir descarga
+(`get_download_stream`); en este ǧltimo caso el artefacto se copia a un
 directorio temporal.
 """
 from __future__ import annotations
@@ -32,10 +32,10 @@ import pandas as pd
 from pii_engine.core.analyzer import PIIAnalyzer
 from pii_engine.core.schema import ENGINE_VERSION, ColumnResult
 
-DEFAULT_BINARY_FOLDER = "model_binary_v1"
-DEFAULT_ENTITY_FOLDER = "model_entity_v1"
-DEFAULT_CONTENT_FOLDER = "model_content_v1"
-DEFAULT_MODEL_FILENAME = "model.joblib"
+DEFAULT_MODELS_FOLDER = "pii_models"
+DEFAULT_BINARY_MODEL_PATH = "binary/model.pkl"
+DEFAULT_ENTITY_MODEL_PATH = "entity/model.pkl"
+DEFAULT_CONTENT_MODEL_PATH = "content/model.pkl"
 DEFAULT_MAX_READ_ROWS = 50_000
 
 
@@ -54,10 +54,10 @@ class DataikuAdapter:
 
     def __init__(
         self,
-        binary_folder: str = DEFAULT_BINARY_FOLDER,
-        entity_folder: str = DEFAULT_ENTITY_FOLDER,
-        content_folder: str = DEFAULT_CONTENT_FOLDER,
-        model_filename: str = DEFAULT_MODEL_FILENAME,
+        models_folder: str = DEFAULT_MODELS_FOLDER,
+        binary_model_path: str = DEFAULT_BINARY_MODEL_PATH,
+        entity_model_path: str = DEFAULT_ENTITY_MODEL_PATH,
+        content_model_path: str = DEFAULT_CONTENT_MODEL_PATH,
         max_read_rows: int = DEFAULT_MAX_READ_ROWS,
         cache_dir: Optional[Union[str, Path]] = None,
         analyzer_factory: Optional[Any] = None,
@@ -65,10 +65,10 @@ class DataikuAdapter:
     ):
         if max_read_rows <= 0:
             raise ValueError("max_read_rows debe ser mayor que cero")
-        self.binary_folder = str(binary_folder)
-        self.entity_folder = str(entity_folder)
-        self.content_folder = str(content_folder)
-        self.model_filename = str(model_filename)
+        self.models_folder = str(models_folder)
+        self.binary_model_path = str(binary_model_path)
+        self.entity_model_path = str(entity_model_path)
+        self.content_model_path = str(content_model_path)
         self.max_read_rows = int(max_read_rows)
         self.strict_models = bool(strict_models)
         self.analyzer_factory = analyzer_factory or PIIAnalyzer
@@ -102,9 +102,11 @@ class DataikuAdapter:
         digest = hashlib.sha1(folder_name.encode("utf-8")).hexdigest()[:8]
         return f"{safe}_{digest}"
 
-    def _download_model(self, folder_name: str, folder: Any) -> Path:
-        dest_dir = self._cache_dir / self._cache_key(folder_name)
-        dest = dest_dir / self.model_filename
+    def _download_model(self, folder_name: str, artifact_path: str, folder: Any) -> Path:
+        artifact = str(artifact_path).replace("\\", "/").lstrip("/")
+        cache_key = f"{folder_name}::{artifact}"
+        dest_dir = self._cache_dir / self._cache_key(cache_key)
+        dest = dest_dir / Path(artifact).name
         with self._lock:
             if dest.exists():
                 return dest
@@ -113,7 +115,7 @@ class DataikuAdapter:
 
             stream = None
             last_error: Optional[Exception] = None
-            for remote_path in (f"/{self.model_filename}", self.model_filename):
+            for remote_path in (f"/{artifact}", artifact):
                 try:
                     stream = folder.get_download_stream(remote_path)
                     break
@@ -122,7 +124,7 @@ class DataikuAdapter:
 
             if stream is None:
                 raise ModelArtifactError(
-                    f"No se pudo descargar {self.model_filename} del folder {folder_name!r}"
+                    f"No se pudo descargar {artifact!r} del folder {folder_name!r}"
                 ) from last_error
 
             try:
@@ -136,49 +138,54 @@ class DataikuAdapter:
 
             return dest
 
-    def resolve_model_path(self, folder_name: str) -> Path:
+    def resolve_model_path(self, artifact_path: str) -> Path:
         """
-        Devuelve una ruta local al `model.joblib` del managed folder indicado.
-        Acepta también una ruta local directa (útil para pruebas y desarrollo).
+        Devuelve una ruta local al artefacto indicado dentro de `models_folder`.
+        Acepta una ruta local directa, una carpeta local o un managed folder.
         """
-        key = str(folder_name)
+        artifact = str(artifact_path).replace("\\", "/").lstrip("/")
+        key = f"{self.models_folder}::{artifact}"
         with self._lock:
             cached = self._resolved.get(key)
             if cached is not None and cached.exists():
                 return cached
 
-        candidate = Path(key).expanduser()
+        candidate = Path(artifact).expanduser()
         if candidate.is_file():
             resolved = candidate
-        elif candidate.is_dir():
-            model_file = candidate / self.model_filename
-            if not model_file.exists():
-                raise ModelArtifactError(
-                    f"El directorio {key!r} no contiene {self.model_filename!r}"
-                )
-            resolved = model_file
         else:
-            dataiku = self._import_dataiku()
-            try:
-                folder = dataiku.Folder(key)
-            except Exception as exc:
-                raise ModelArtifactError(f"No se pudo abrir el managed folder {key!r}") from exc
-
-            resolved = None
-            get_path = getattr(folder, "get_path", None)
-            if callable(get_path):
+            root = Path(self.models_folder).expanduser()
+            if root.is_dir():
+                model_file = root / artifact
+                if not model_file.exists():
+                    raise ModelArtifactError(
+                        f"El directorio {self.models_folder!r} no contiene {artifact!r}"
+                    )
+                resolved = model_file
+            else:
+                dataiku = self._import_dataiku()
                 try:
-                    root = Path(get_path())
-                except Exception:
-                    root = None
-                if root is not None:
-                    if root.is_file():
-                        resolved = root
-                    elif (root / self.model_filename).exists():
-                        resolved = root / self.model_filename
+                    folder = dataiku.Folder(self.models_folder)
+                except Exception as exc:
+                    raise ModelArtifactError(
+                        f"No se pudo abrir el managed folder {self.models_folder!r}"
+                    ) from exc
 
-            if resolved is None:
-                resolved = self._download_model(key, folder)
+                resolved = None
+                get_path = getattr(folder, "get_path", None)
+                if callable(get_path):
+                    try:
+                        root = Path(get_path())
+                    except Exception:
+                        root = None
+                    if root is not None:
+                        if root.is_file():
+                            resolved = root
+                        elif (root / artifact).exists():
+                            resolved = root / artifact
+
+                if resolved is None:
+                    resolved = self._download_model(self.models_folder, artifact, folder)
 
         with self._lock:
             self._resolved[key] = resolved
@@ -188,20 +195,20 @@ class DataikuAdapter:
     # Motor
     # ------------------------------------------------------------------
     def build_analyzer(self, refresh: bool = False) -> Any:
-        """Construye (y cachea) el `PIIAnalyzer` con los tres bundles resueltos."""
+        """Construye (y cachea) el `PIIAnalyzer` con los tres artefactos resueltos."""
         with self._lock:
             if self._analyzer is not None and not refresh:
                 return self._analyzer
 
             paths: Dict[str, Optional[Path]] = {}
             errors: List[str] = []
-            for name, folder in (
-                ("binary", self.binary_folder),
-                ("entity", self.entity_folder),
-                ("content", self.content_folder),
+            for name, artifact in (
+                ("binary", self.binary_model_path),
+                ("entity", self.entity_model_path),
+                ("content", self.content_model_path),
             ):
                 try:
-                    paths[name] = self.resolve_model_path(folder)
+                    paths[name] = self.resolve_model_path(artifact)
                 except ModelArtifactError as exc:
                     paths[name] = None
                     errors.append(str(exc))
@@ -331,10 +338,11 @@ class DataikuAdapter:
             "status": "ok",
             "engine_version": ENGINE_VERSION,
             "engine_ready": False,
-            "folders": {
-                "binary": self.binary_folder,
-                "entity": self.entity_folder,
-                "content": self.content_folder,
+            "models_folder": self.models_folder,
+            "model_files": {
+                "binary": self.binary_model_path,
+                "entity": self.entity_model_path,
+                "content": self.content_model_path,
             },
         }
         try:

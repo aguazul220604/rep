@@ -2,8 +2,8 @@
 """
 Refuerzo y validación de contexto por nombre de columna (`ContextEnhancer`).
 
-Normaliza el nombre de la columna igual que `pii_utils.normalize_name` y evalúa
-palabras de contexto positivas y negativas por entidad.
+Normaliza el nombre de la columna y evalúa palabras de contexto positivas y
+negativas por entidad.
 """
 import re
 import unicodedata

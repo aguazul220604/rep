@@ -1,6 +1,8 @@
 # Cambios PII en `backend.py`
 
-Referencia: `data_gate/backend.py` local (1452 líneas). Los números de línea son los del archivo actual; al insertar bloques, replica de abajo hacia arriba para evitar desplazamientos.
+Referencia: `data_gate/backend.py` local (1452 líneas) y `webapp_v2_1/backend.py`. Los números de línea son los del archivo actual; al insertar bloques, replica de abajo hacia arriba para evitar desplazamientos.
+
+> **Actualización de modelos (`pii_models`).** Ambos backends deben construir `DataikuAdapter` con `models_folder`, `binary_model_path`, `entity_model_path` y `content_model_path`. Los argumentos viejos `binary_folder`, `entity_folder`, `content_folder` y `model_filename` ya no existen; un backend sin actualizar falla con `TypeError`.
 
 ## 1. Líneas 24–32 — Import protegido
 
@@ -35,9 +37,10 @@ def _get_pii_adapter():
     with _PII_ADAPTER_LOCK:
         if _PII_ADAPTER is None:
             _PII_ADAPTER = DataikuAdapter(
-                binary_folder=os.environ.get("PII_BINARY_FOLDER", "model_binary_v1"),
-                entity_folder=os.environ.get("PII_ENTITY_FOLDER", "model_entity_v1"),
-                content_folder=os.environ.get("PII_CONTENT_FOLDER", "model_content_v1"),
+                models_folder=os.environ.get("PII_MODELS_FOLDER", "pii_models"),
+                binary_model_path=os.environ.get("PII_BINARY_MODEL_PATH", "binary/model.pkl"),
+                entity_model_path=os.environ.get("PII_ENTITY_MODEL_PATH", "entity/model.pkl"),
+                content_model_path=os.environ.get("PII_CONTENT_MODEL_PATH", "content/model.pkl"),
                 strict_models=True,
             )
         return _PII_ADAPTER
@@ -231,3 +234,54 @@ def pii_health():
         }), 503
     return jsonify(info), 200 if info.get("engine_ready") else 503
 ```
+
+## 7. `webapp_v2_1/backend.py` — wiring al layout `pii_models`
+
+En `get_adapter()` reemplazar la construcción anterior de `DataikuAdapter` por:
+
+```python
+_adapter = DataikuAdapter(
+    models_folder=os.getenv("PII_MODELS_FOLDER", "pii_models"),
+    binary_model_path=os.getenv("PII_BINARY_MODEL_PATH", "binary/model.pkl"),
+    entity_model_path=os.getenv("PII_ENTITY_MODEL_PATH", "entity/model.pkl"),
+    content_model_path=os.getenv("PII_CONTENT_MODEL_PATH", "content/model.pkl"),
+    max_read_rows=_MAX_READ_ROWS,
+    strict_models=True,
+)
+```
+
+No se requieren cambios en:
+
+- `process_table()`: sigue llamando `adapter.analyze_dataframe(...)`.
+- `_result_to_row()`: el contrato de `ColumnResult` no cambió.
+- `health()`: sigue retornando el resultado de `adapter.health()`.
+- `app.js`, `index.html` y `styles.css`: no consumen rutas de modelos ni `health.folders`.
+
+`DataikuAdapter.health()` ahora reporta `models_folder` y `model_files` en lugar de `folders`; el frontend no lee esos campos.
+
+## 8. Variables de entorno y code env
+
+Variables del backend:
+
+| Variable | Default | Uso |
+|---|---|---|
+| `PII_MODELS_FOLDER` | `pii_models` | Managed folder raíz |
+| `PII_BINARY_MODEL_PATH` | `binary/model.pkl` | Modelo binario |
+| `PII_ENTITY_MODEL_PATH` | `entity/model.pkl` | Modelo de entidad |
+| `PII_CONTENT_MODEL_PATH` | `content/model.pkl` | Modelo de contenido |
+| `PII_MAX_READ_ROWS` | `50000` | Límite de lectura |
+| `PII_MAX_UPLOAD_MB` | `50` | Límite de subida en la webapp |
+
+Variables obsoletas: `PII_BINARY_FOLDER`, `PII_ENTITY_FOLDER` y `PII_CONTENT_FOLDER`.
+
+El code env del backend/webapp debe incluir `cloudpickle` y `lightgbm`, además de `joblib`, `scikit-learn`, `scipy`, `pandas`, `PyYAML` y `dataiku`. Los artefactos `model.pkl` son autocontenidos; no requieren `pii_utils.py`, `pii_entity_model.py` ni `pii_content_features.py`.
+
+## 9. Verificación
+
+1. En DSS, confirmar que existe el managed folder `pii_models` con:
+   - `binary/model.pkl`
+   - `entity/model.pkl`
+   - `content/model.pkl`
+2. Redesplegar `webapp_v2_1/backend.py` en la pestaña Python de la webapp.
+3. Consultar `/health` y verificar `engine_ready=true` y `model_version` con los tres modelos.
+4. Probar `/process_table` con un CSV y confirmar que devuelve `columns_analysis` sin errores de artefacto.

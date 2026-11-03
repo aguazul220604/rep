@@ -8,14 +8,14 @@ Entidades cubiertas (Sección 8.2):
   - `direccion`
   - `empresa`
 
-El bundle `model_content_v1/model.joblib` contiene `labels`, `temperature`,
+El bundle `pii_models/content/model.pkl` contiene `labels`, `temperature`,
 `tau`, `theta`, `other_label` y `model_version`. La inferencia se hace **una sola
-vez por columna** y se reutiliza entre todas las entidades D; la decisión de
-columna se toma con la misma agregación calibrada del entrenamiento:
+vez por columna** y se reutiliza entre todas las entidades D; la decisi��n de
+columna se toma con la misma agregaci��n calibrada del entrenamiento:
 cada valor vota por su clase si `p >= tau` y se acepta la clase con cobertura
 `>= theta`; si ninguna llega, gana `otro`.
 
-Soporta cargar `model.joblib` desde una ruta local o un Dataiku Managed Folder,
+Soporta cargar `model.pkl` desde una ruta local o un Dataiku Managed Folder,
 ya sea como estimador sklearn directo (`predict_proba`) o como bundle diccionario
 (`{"model": ..., "classes": ..., "tau": ..., "theta": ...}`).
 Si el artefacto aún no está disponible, se abstiene de forma segura sin interrumpir el motor.
@@ -47,6 +47,8 @@ DEFAULT_TAU = 0.50
 DEFAULT_THETA = 0.30
 DEFAULT_OTHER_LABEL = "otro"
 
+_MODEL_FILENAMES = ("model.pkl", "model.joblib")
+
 
 def _clean_values(values: List[str]) -> List[str]:
     out = []
@@ -76,7 +78,7 @@ def _apply_temperature(proba: np.ndarray, temperature: float) -> np.ndarray:
 
 class ContentModelLoader:
     """
-    Cargador con caché en memoria para compartir un mismo `model.joblib` entre
+    Cargador con caché en memoria para compartir un mismo `model.pkl` entre
     las 4 entidades del Grupo D si usan un modelo multiclase único.
     """
     _cache: Dict[str, Any] = {}
@@ -91,7 +93,13 @@ class ContentModelLoader:
 
         p = Path(model_path)
         if p.is_dir():
-            p = p / "model.joblib"
+            for name in _MODEL_FILENAMES:
+                candidate = p / name
+                if candidate.exists():
+                    p = candidate
+                    break
+            else:
+                p = p / _MODEL_FILENAMES[0]
         if not p.exists():
             return None
 
@@ -237,7 +245,7 @@ class ContentModelScorer:
 
 class ModelRecognizer(Recognizer):
     """
-    Recognizer que puntúa valores de una muestra mediante un modelo de contenido (`model.joblib`).
+    Recognizer que puntúa valores de una muestra mediante un modelo de contenido (`model.pkl`).
     """
 
     def __init__(

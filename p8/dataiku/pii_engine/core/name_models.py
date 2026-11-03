@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Inferencia sobre nombres de columna (Sección 8 de la documentación):
-  1. Modelo binario de nombre (`model_binary_v1`) como compuerta de PII.
+  1. Modelo binario de nombre (`pii_models/binary/model.pkl`) como compuerta de PII.
   2. Reglas determinísticas de `regex.txt` (`_NAME_REGEX_RULES`) como fast path
      para entidades de alta precisión y como respaldo.
-  3. Modelo multiclase de entidad (`model_entity_v1`) solo para las columnas que
-     el binario marca como PII y que no resolvió el fast path.
+  3. Modelo multiclase de entidad (`pii_models/entity/model.pkl`) solo para las
+     columnas que el binario marca como PII y que no resolvió el fast path.
 
 Optimizaciones de resolución de nombres:
   - El modelo de entidad no corre en columnas que el binario descarta.
@@ -103,52 +103,29 @@ def _apply_temperature(proba: np.ndarray, temperature: float) -> np.ndarray:
     return q / q.sum(axis=1, keepdims=True)
 
 
-_LEGACY_ENTITY_CLASS = "HybridEntityClassifier"
-_LEGACY_ENTITY_SYMBOLS = {"HybridEntityClassifier": "HybridEntityClassifier", "_softmax_rows": "_softmax_rows"}
-_JOBLIB_LEGACY_LOCK = threading.Lock()
+_MODEL_FILENAMES = ("model.pkl", "model.joblib")
 
 
-def _is_legacy_entity_error(exc: BaseException) -> bool:
-    if _LEGACY_ENTITY_CLASS in str(exc):
-        return True
-    return isinstance(exc, ModuleNotFoundError)
+def _resolve_model_file(path: Path) -> Path:
+    if not path.is_dir():
+        return path
+    for name in _MODEL_FILENAMES:
+        candidate = path / name
+        if candidate.exists():
+            return candidate
+    return path / _MODEL_FILENAMES[0]
 
 
 def _load_joblib_bundle(path: Path) -> Any:
     import joblib
 
-    try:
-        return joblib.load(path)
-    except (AttributeError, ModuleNotFoundError) as exc:
-        if not _is_legacy_entity_error(exc):
-            raise
-
-        try:
-            import pii_entity_model
-        except Exception:
-            raise exc
-
-        from joblib import numpy_pickle
-
-        with _JOBLIB_LEGACY_LOCK:
-            original_find_class = numpy_pickle.NumpyUnpickler.find_class
-
-            def _find_class(unpickler, module, name):
-                target = _LEGACY_ENTITY_SYMBOLS.get(name)
-                if target is not None:
-                    return getattr(pii_entity_model, target)
-                return original_find_class(unpickler, module, name)
-
-            numpy_pickle.NumpyUnpickler.find_class = _find_class
-            try:
-                return joblib.load(path)
-            finally:
-                numpy_pickle.NumpyUnpickler.find_class = original_find_class
+    return joblib.load(path)
 
 
 class NameModelPredictor:
     """
-    Gestiona la inferencia de los modelos de nombre (`model_binary_v1` y `model_entity_v1`).
+    Gestiona la inferencia de los modelos de nombre
+    (`pii_models/binary/model.pkl` y `pii_models/entity/model.pkl`).
 
     Flujo:
       1. Binario para todas las columnas (barato y vectorizado).
@@ -156,8 +133,8 @@ class NameModelPredictor:
       3. Modelo de entidad solo para columnas PII que no resolvió el fast path.
       4. Caché por nombre normalizado para evitar repetir trabajo entre tablas.
 
-    Si no se proporcionan los bundles `model.joblib`, opera de forma determinística
-    con el motor de reglas de `regex.txt` para permitir uso local inmediato.
+    Si no se proporcionan los bundles, opera de forma determinística con el motor
+    de reglas de `regex.txt` para permitir uso local inmediato.
     """
 
     def __init__(
@@ -193,9 +170,7 @@ class NameModelPredictor:
             return None
         if isinstance(source, dict):
             return source
-        p = Path(source)
-        if p.is_dir():
-            p = p / "model.joblib"
+        p = _resolve_model_file(Path(source))
         if not p.exists():
             return None
         loaded = _load_joblib_bundle(p)

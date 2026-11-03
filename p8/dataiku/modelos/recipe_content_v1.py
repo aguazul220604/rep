@@ -4,7 +4,7 @@ Python recipe (Dataiku): entrena el modelo de análisis de contenido.
 
 Entrada : training_dataset_final_mc (value, type) con las clases
           nombre, apellido, direccion, empresa y otro
-Salida  : managed folder pii_models/content con
+Salida  : managed folder model_content_v1 con
             model.pkl                 bundle {"model", "classes", labels, temperatura, tau, theta, ...}
             report.html               reporte consolidado de métricas y gráficas
 """
@@ -109,8 +109,7 @@ def aggregate_column(proba, labels, tau, theta, other_label="otro"):
 
 # ======================= CONFIG =======================
 INPUT_DATASET = "training_dataset_final_mc"
-OUTPUT_FOLDER = "pii_models"
-MODEL_SUBDIR = "content"
+OUTPUT_FOLDER = "model_content_v1"
 MODEL_VERSION = "v1"
 VALUE_COL, TYPE_COL = "value", "type"
 OTRO_LABEL = "otro"
@@ -160,9 +159,7 @@ def _artifact_bytes(obj):
     )
 
 
-def cleanup_model_subfolder(keep_files):
-    prefix = MODEL_SUBDIR + "/"
-    keep = {prefix + name for name in keep_files}
+def cleanup_output_folder(keep):
     try:
         existing = folder.list_paths_in_partition()
     except Exception as e:
@@ -170,7 +167,7 @@ def cleanup_model_subfolder(keep_files):
         return
     for path in existing:
         name = path.lstrip("/").rstrip("/")
-        if not name.startswith(prefix) or name in keep:
+        if name in keep:
             continue
         try:
             folder.delete_path(path)
@@ -453,7 +450,7 @@ config = {
     "theta": theta_star,
     "column_sample_size": COL_SAMPLE_SIZE,
     "feature_module": "inline",
-    "model_file": f"{MODEL_SUBDIR}/model.pkl",
+    "model_file": "model.pkl",
     "libs": {
         "python": platform.python_version(), "sklearn": sklearn.__version__,
         "numpy": np.__version__, "scipy": scipy.__version__,
@@ -490,7 +487,7 @@ metrics = {
 bundle = dict(config)
 bundle["model"] = final
 bundle["classes"] = labels          # alias que usa ModelRecognizer
-put_bytes(f"{MODEL_SUBDIR}/model.pkl", _artifact_bytes(bundle))
+put_bytes("model.pkl", _artifact_bytes(bundle))
 
 try:
     import matplotlib
@@ -717,7 +714,7 @@ def build_html_report():
 """.format(
         created=html.escape(config["created_utc"]),
         input_dataset=html.escape(INPUT_DATASET),
-        output_folder=html.escape(OUTPUT_FOLDER + "/" + MODEL_SUBDIR),
+        output_folder=html.escape(OUTPUT_FOLDER),
         model_version=html.escape(MODEL_VERSION),
         C=C, n_splits=N_SPLITS,
         tau=tau_star, theta=theta_star,
@@ -753,8 +750,8 @@ def build_html_report():
     )
 
 
-put_bytes(f"{MODEL_SUBDIR}/report.html", build_html_report().encode("utf-8"))
-cleanup_model_subfolder({"model.pkl", "report.html"})
+put_bytes("report.html", build_html_report().encode("utf-8"))
+cleanup_output_folder({"model.pkl", "report.html"})
 
 print("Listo en %.0fs. Artefactos guardados en el folder '%s'." % (
-    time.time() - t0, OUTPUT_FOLDER + "/" + MODEL_SUBDIR))
+    time.time() - t0, OUTPUT_FOLDER))

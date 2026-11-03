@@ -3,7 +3,7 @@
 Python recipe (Dataiku): experimento del modelo BINARIO de PII con LightGBM.
 
   Entrada : dataset de entrenamiento con columnas  dataset, name, pii
-  Salida  : managed folder pii_models/binary con:
+  Salida  : managed folder model_binary_v1 con:
               model.pkl    -> {"model", "threshold", "model_type", "name_col"}
               report.html  -> métricas OOF, matrices de confusión, curvas ROC/PR,
                               calibración, errores e importancia de n-gramas.
@@ -83,8 +83,7 @@ def normalize_names(names):
 # Configuración
 # ----------------------------------------------------------------------------
 INPUT_DATASET = "dataset_validated_stacked"
-OUTPUT_FOLDER = "pii_models"
-MODEL_SUBDIR = "binary"
+OUTPUT_FOLDER = "model_binary_v1"
 
 NAME_COL = "name"
 LABEL_COL = "pii"
@@ -574,7 +573,7 @@ def build_html_report():
   <header>
     <div>
       <h1>Reporte de Entrenamiento — Modelo Binario PII con LightGBM</h1>
-      <p class="muted" style="margin:0;">Dataset: <code>{html.escape(INPUT_DATASET)}</code> &rarr; Managed Folder: <code>{html.escape(OUTPUT_FOLDER + "/" + MODEL_SUBDIR)}</code> &nbsp;|&nbsp; Entrenado: <strong>{html.escape(training_info['trained_at'])}</strong></p>
+      <p class="muted" style="margin:0;">Dataset: <code>{html.escape(INPUT_DATASET)}</code> &rarr; Managed Folder: <code>{html.escape(OUTPUT_FOLDER)}</code> &nbsp;|&nbsp; Entrenado: <strong>{html.escape(training_info['trained_at'])}</strong></p>
     </div>
     <div class="badges">
       <span class="badge">Modelo: LightGBM</span>
@@ -662,8 +661,8 @@ def _artifact_bytes(obj):
     )
 
 
-save(f"{MODEL_SUBDIR}/model.pkl", _artifact_bytes(bundle))
-save(f"{MODEL_SUBDIR}/report.html", build_html_report())
+save("model.pkl", _artifact_bytes(bundle))
+save("report.html", build_html_report())
 
 o = metrics["overall_oof"]
 u = metrics["unseen_names_oof"]

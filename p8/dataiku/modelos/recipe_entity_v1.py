@@ -4,7 +4,7 @@ Python recipe (Dataiku): entrenamiento del modelo MULTICLASE de ENTIDAD v2
 (Ensamble Híbrido Especializado para nombres de columna PII).
 
   Entrada : dataset con columnas  dataset, name, pii, entity
-  Salida  : managed folder pii_models/entity con:
+  Salida  : managed folder model_entity_v1 con:
               model.pkl    -> {"model","classes","temperature","min_confidence",...}
               report.html  -> reporte único autocontenido con métricas OOF (global,
                                nombres no vistos, vistos y por fold), métricas por entidad,
@@ -345,8 +345,7 @@ class HybridEntityClassifier(BaseEstimator, ClassifierMixin):
 # Configuración
 # ----------------------------------------------------------------------------
 INPUT_DATASET = "dataset_validated_stacked"
-OUTPUT_FOLDER = "pii_models"
-MODEL_SUBDIR = "entity"
+OUTPUT_FOLDER = "model_entity_v1"
 
 NAME_COL = "name"
 LABEL_COL = "pii"
@@ -991,7 +990,7 @@ def build_html_report():
     <div>
       <h1>Reporte de Entrenamiento — Modelo Multiclase de Entidad PII (v2)</h1>
       <p class="muted" style="margin:0;">
-        Dataset: <code>{html.escape(INPUT_DATASET)}</code> &rarr; Managed Folder: <code>{html.escape(OUTPUT_FOLDER + "/" + MODEL_SUBDIR)}</code>
+        Dataset: <code>{html.escape(INPUT_DATASET)}</code> &rarr; Managed Folder: <code>{html.escape(OUTPUT_FOLDER)}</code>
         &nbsp;|&nbsp; Entrenado: <strong>{html.escape(training_info['trained_at'])}</strong>
       </p>
     </div>
@@ -1097,7 +1096,7 @@ def build_html_report():
 
 
 # ----------------------------------------------------------------------------
-# Escritura al managed folder (pii_models/entity)
+# Escritura al managed folder (model_entity_v1)
 # ----------------------------------------------------------------------------
 folder = dataiku.Folder(OUTPUT_FOLDER)
 
@@ -1118,8 +1117,8 @@ def _artifact_bytes(obj):
     )
 
 
-save(f"{MODEL_SUBDIR}/model.pkl", _artifact_bytes(bundle))
-save(f"{MODEL_SUBDIR}/report.html", build_html_report())
+save("model.pkl", _artifact_bytes(bundle))
+save("report.html", build_html_report())
 
 o, u, a = metrics["overall_oof"], metrics["unseen_names_oof"], metrics["at_min_confidence"]
 print(f"Listo ({training_info['trained_at']}) | T={temperature:.2f} | min_conf={min_conf:.2f} | "

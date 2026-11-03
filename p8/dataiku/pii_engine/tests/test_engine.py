@@ -228,7 +228,7 @@ class TestEndToEndAnalyze(unittest.TestCase):
                         out.append([0.05, 0.90, 0.05])
                 return np.asarray(out)
 
-        ContentModelLoader.register_in_memory("pii_models/content/model.pkl", DummyContentModel())
+        ContentModelLoader.register_in_memory("model_content_v1/model.pkl", DummyContentModel())
         try:
             df = pd.DataFrame({
                 "nom_cte": ["JUAN PEREZ LOPEZ", "MARIA GARCIA HERNANDEZ", "CARLOS SANCHEZ"],
@@ -252,7 +252,7 @@ class TestEndToEndAnalyze(unittest.TestCase):
 
 
     def test_model_recognizer_dict_bundle_grupo_d(self):
-        """Bundle {'model','classes',...} con las 5 clases del Grupo D (contrato de pii_models/content)."""
+        """Bundle {'model','classes',...} con las 5 clases del Grupo D (contrato de model_content_v1)."""
         classes = ["apellido", "direccion", "empresa", "nombre", "otro"]
         surnames = {"PEREZ", "LOPEZ", "GARCIA", "HERNANDEZ", "MARTINEZ", "DIAZ", "SANCHEZ"}
 
@@ -288,7 +288,7 @@ class TestEndToEndAnalyze(unittest.TestCase):
             "other_label": "otro",
             "model_version": "test-content-v1",
         }
-        ContentModelLoader.register_in_memory("pii_models/content/model.pkl", bundle)
+        ContentModelLoader.register_in_memory("model_content_v1/model.pkl", bundle)
         try:
             df = pd.DataFrame({
                 "nom_cte": ["JUAN PEREZ LOPEZ", "MARIA LOPEZ GARCIA", "CARLOS SANCHEZ DIAZ"],
@@ -419,7 +419,7 @@ class TestNameResolutionOptimizations(unittest.TestCase):
 
         model = CountingContent()
         ContentModelLoader.register_in_memory(
-            "pii_models/content/model.pkl",
+            "model_content_v1/model.pkl",
             {
                 "model": model,
                 "classes": list(CountingContent.classes_),
@@ -463,7 +463,7 @@ class TestNameResolutionOptimizations(unittest.TestCase):
 
         model = LowConfidenceContent()
         ContentModelLoader.register_in_memory(
-            "pii_models/content/model.pkl",
+            "model_content_v1/model.pkl",
             {
                 "model": model,
                 "classes": list(LowConfidenceContent.classes_),

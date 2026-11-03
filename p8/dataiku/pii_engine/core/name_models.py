@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Inferencia sobre nombres de columna (Sección 8 de la documentación):
-  1. Modelo binario de nombre (`pii_models/binary/model.pkl`) como compuerta de PII.
+  1. Modelo binario de nombre (`model_binary_v1/model.pkl`) como compuerta de PII.
   2. Reglas determinísticas de `regex.txt` (`_NAME_REGEX_RULES`) como fast path
      para entidades de alta precisión y como respaldo.
-  3. Modelo multiclase de entidad (`pii_models/entity/model.pkl`) solo para las
+  3. Modelo multiclase de entidad (`model_entity_v1/model.pkl`) solo para las
      columnas que el binario marca como PII y que no resolvió el fast path.
 
 Optimizaciones de resolución de nombres:
@@ -125,7 +125,7 @@ def _load_joblib_bundle(path: Path) -> Any:
 class NameModelPredictor:
     """
     Gestiona la inferencia de los modelos de nombre
-    (`pii_models/binary/model.pkl` y `pii_models/entity/model.pkl`).
+    (`model_binary_v1/model.pkl` y `model_entity_v1/model.pkl`).
 
     Flujo:
       1. Binario para todas las columnas (barato y vectorizado).

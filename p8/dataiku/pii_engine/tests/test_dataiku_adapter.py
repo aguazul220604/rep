@@ -75,9 +75,9 @@ class _FakeDataset:
 
 
 def _write_bundles(root: Path, content_version: str = "adapter-v1"):
-    binary_dir = root / "binary"
-    entity_dir = root / "entity"
-    content_dir = root / "content"
+    binary_dir = root / "model_binary_v1"
+    entity_dir = root / "model_entity_v1"
+    content_dir = root / "model_content_v1"
     for directory in (binary_dir, entity_dir, content_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -110,10 +110,13 @@ class TestDataikuAdapter(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.models_root = self.root / "pii_models"
-        self.binary_dir, self.entity_dir, self.content_dir = _write_bundles(self.models_root)
+        self.binary_dir, self.entity_dir, self.content_dir = _write_bundles(self.root)
 
-        self.folders = {"pii_models": _FakeFolder(self.models_root)}
+        self.folders = {
+            "model_binary_v1": _FakeFolder(self.binary_dir),
+            "model_entity_v1": _FakeFolder(self.entity_dir),
+            "model_content_v1": _FakeFolder(self.content_dir),
+        }
         self.datasets = {
             "clientes": _FakeDataset(
                 pd.DataFrame({
@@ -142,21 +145,21 @@ class TestDataikuAdapter(unittest.TestCase):
         health = self.adapter.health()
         self.assertEqual(health["status"], "ok")
         self.assertTrue(health["engine_ready"])
-        self.assertEqual(health["models_folder"], "pii_models")
-        self.assertEqual(health["model_files"]["binary"], "binary/model.pkl")
+        self.assertEqual(health["folders"]["binary"], "model_binary_v1")
+        self.assertEqual(health["folders"]["content"], "model_content_v1")
         self.assertIn("content:adapter-v1", health["model_version"])
 
-    def test_resolves_nested_local_paths(self):
+    def test_resolves_managed_folder_paths(self):
         self.assertEqual(
-            self.adapter.resolve_model_path("binary/model.pkl"),
+            self.adapter.resolve_model_path("model_binary_v1"),
             self.binary_dir / "model.pkl",
         )
         self.assertEqual(
-            self.adapter.resolve_model_path("entity/model.pkl"),
+            self.adapter.resolve_model_path("model_entity_v1"),
             self.entity_dir / "model.pkl",
         )
         self.assertEqual(
-            self.adapter.resolve_model_path("content/model.pkl"),
+            self.adapter.resolve_model_path("model_content_v1"),
             self.content_dir / "model.pkl",
         )
 
@@ -189,13 +192,13 @@ class TestDataikuAdapter(unittest.TestCase):
 
     def test_downloads_model_when_folder_has_no_local_path(self):
         blob = (self.content_dir / "model.pkl").read_bytes()
-        self.folders["pii_models"] = _FakeFolder(None, blob)
-        path = self.adapter.resolve_model_path("content/model.pkl")
+        self.folders["model_content_v1"] = _FakeFolder(None, blob)
+        path = self.adapter.resolve_model_path("model_content_v1")
         self.assertTrue(path.exists())
         self.assertEqual(path.read_bytes(), blob)
 
     def test_missing_model_is_reported(self):
-        del self.folders["pii_models"]
+        del self.folders["model_content_v1"]
         with self.assertRaises(ModelArtifactError):
             self.adapter.build_analyzer()
         health = self.adapter.health()
@@ -207,7 +210,9 @@ class TestDataikuAdapter(unittest.TestCase):
             raise RuntimeError("modelo roto")
 
         adapter = DataikuAdapter(
-            models_folder=self.models_root,
+            binary_folder=self.binary_dir,
+            entity_folder=self.entity_dir,
+            content_folder=self.content_dir,
             analyzer_factory=broken_factory,
         )
         health = adapter.health()

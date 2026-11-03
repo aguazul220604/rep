@@ -8,7 +8,7 @@ Entidades cubiertas (Sección 8.2):
   - `direccion`
   - `empresa`
 
-El bundle `pii_models/content/model.pkl` contiene `labels`, `temperature`,
+El bundle `model_content_v1/model.pkl` contiene `labels`, `temperature`,
 `tau`, `theta`, `other_label` y `model_version`. La inferencia se hace **una sola
 vez por columna** y se reutiliza entre todas las entidades D; la decisi��n de
 columna se toma con la misma agregaci��n calibrada del entrenamiento:

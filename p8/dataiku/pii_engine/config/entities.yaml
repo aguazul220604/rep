@@ -420,7 +420,7 @@ entities:
     classification: 1
     group: D
     strategy: model
-    model: pii_models/content/model.pkl
+    model: model_content_v1/model.pkl
     context_words: [nombre, name, nm, nomcte, beneficiario, titular, ordenante, aval, deudor, usuario, nom]
     negative_context_words: [apellido, apepat, apemat, empresa, razon social, calle, colonia, nomina]
     context_mode: recommended
@@ -430,7 +430,7 @@ entities:
     classification: 1
     group: D
     strategy: model
-    model: pii_models/content/model.pkl
+    model: model_content_v1/model.pkl
     context_words: [apellido, ap paterno, ap materno, a paterno, a materno, apepat, apemat, surname, last name]
     context_mode: recommended
     min_match_rate: 0.50
@@ -439,7 +439,7 @@ entities:
     classification: 1
     group: D
     strategy: model
-    model: pii_models/content/model.pkl
+    model: model_content_v1/model.pkl
     context_words: [direccion, domicil, dom, dir, calle, street, addr, avenida, blvd, colonia, nomcol, asentamiento, municipio, alcaldia, delegacion, localidad, ciudad, estado, entidad, pais]
     negative_context_words: [estado civil, lugar nacimiento, nacim]
     context_mode: recommended
@@ -449,7 +449,7 @@ entities:
     classification: 1
     group: D
     strategy: model
-    model: pii_models/content/model.pkl
+    model: model_content_v1/model.pkl
     context_words: [empresa, razon social, empleador, compania, negafiliado, dealer, oribnk, recvbnk]
     context_mode: recommended
     min_match_rate: 0.50

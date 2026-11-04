@@ -4,10 +4,11 @@ Python recipe (Dataiku): genera dataset sintetico de las 40 entidades PII.
 
 Entrada : ninguna.
 Salida  : dataset `entity_samples_50` con una columna por entidad (40 columnas,
-          en el orden de `entities.yaml`) y 50 filas de datos sinteticos. Todos
-          los valores son validos por construccion (digitos verificadores
-          CURP/RFC/CLABE/NSS/Luhn/IBAN, estructuras INE/SAT/SEPOMEX y catalogos
-          oficiales del motor).
+          en el orden de `entities.yaml`) y N_ROWS filas de datos sinteticos
+          (N_ROWS se define en el CONFIG de esta receta; valido de 1 a
+          1,000,000). Todos los valores son validos por construccion (digitos
+          verificadores CURP/RFC/CLABE/NSS/Luhn/IBAN, estructuras INE/SAT/
+          SEPOMEX y catalogos oficiales del motor).
 
 Uso en Dataiku:
   1. Crear receta Python sin datasets de entrada.
@@ -46,8 +47,15 @@ except ImportError:
 
 # ======================= CONFIG =======================
 OUTPUT_DATASET = "entity_samples_50"
-N_ROWS = 50
+N_ROWS = 50          # editable en la receta; rango valido 1..1,000,000
 SEED = 42
+
+# Escalas: por encima de estos umbrales se relajan unicidad y validacion
+# para mantener runtime y RAM acotados (1M filas ~8 min / ~3.2 GB).
+MAX_ROWS = 1_000_000
+UNIQUE_UP_TO = 50_000         # hasta aqui se exigen valores unicos por columna
+VALIDATE_FULL_UP_TO = 100_000  # hasta aqui validacion completa del motor
+VALIDATE_SAMPLE_SIZE = 20_000  # muestra por columna por encima del umbral
 
 ENTITIES = [
     "curp", "rfc", "clave_elector", "clabe", "iban", "tarjeta", "correo", "ip",
@@ -237,6 +245,10 @@ def _random_date(year_from, year_to):
 
 
 def _fill(generator, n):
+    if n > UNIQUE_UP_TO:
+        # Escala grande: sin control de unicidad (ahorra tiempo y RAM;
+        # a partir de ~50k filas varias columnas no alcanzan a ser unicas).
+        return [generator() for _ in range(n)]
     out = []
     seen = set()
     dup_streak = 0
@@ -777,10 +789,23 @@ def _validate_with_engine(df):
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     entities_cfg = cfg["entities"]
 
+    n_rows = len(df)
+    sample_mode = n_rows > VALIDATE_FULL_UP_TO
+    if sample_mode:
+        print(
+            "Validacion motor: muestra de %d valores por columna (N_ROWS=%d)"
+            % (VALIDATE_SAMPLE_SIZE, n_rows)
+        )
+        rng = random.Random(SEED)
+    else:
+        print("Validacion motor: completa (%d valores por columna)" % n_rows)
+
     for column in ENTITIES:
         spec = entities_cfg[column]
         strategy = str(spec.get("strategy", "regex")).lower()
         values = df[column].astype(str).tolist()
+        if sample_mode:
+            values = rng.sample(values, VALIDATE_SAMPLE_SIZE)
 
         if strategy == "regex":
             patterns = spec.get("patterns") or []
@@ -851,8 +876,15 @@ def validate_output(df):
 
 # ----------------------- main -----------------------
 def main():
-    if N_ROWS <= 0:
-        raise ValueError("N_ROWS debe ser positivo.")
+    if not isinstance(N_ROWS, int) or isinstance(N_ROWS, bool):
+        raise ValueError(
+            "N_ROWS debe ser un entero; se obtuvo %r." % (N_ROWS,)
+        )
+    if not (1 <= N_ROWS <= MAX_ROWS):
+        raise ValueError(
+            "N_ROWS debe estar entre 1 y %d; se obtuvo %d."
+            % (MAX_ROWS, N_ROWS)
+        )
     if len(ENTITIES) != 40:
         raise ValueError("Se esperaban 40 entidades, hay %d." % len(ENTITIES))
     if set(GENERATORS) != set(ENTITIES):

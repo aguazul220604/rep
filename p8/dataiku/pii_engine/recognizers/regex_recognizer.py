@@ -21,7 +21,7 @@ except ImportError:
 
 from pii_engine.core.schema import ColumnSample, EntityScore
 from pii_engine.recognizers.base import Recognizer
-from pii_engine.recognizers.context import ContextEnhancer
+from pii_engine.recognizers.context import ContextEnhancer, is_placeholder_column_name
 from pii_engine.recognizers.validators import STRONG_CHECKSUM_VALIDATORS, get_validator
 
 
@@ -52,6 +52,7 @@ class RegexRecognizer(Recognizer):
         negative_context_words: Optional[List[str]] = None,
         context_mode: str = "optional",
         allow_in_free_text: bool = True,
+        allow_content_without_name: bool = False,
     ):
         super().__init__(
             entity=entity,
@@ -63,6 +64,7 @@ class RegexRecognizer(Recognizer):
             context_mode=context_mode,
         )
         self.patterns = list(patterns or [])
+        self.allow_content_without_name = bool(allow_content_without_name)
         self.validator_name = validator_name
         self.validator: Optional[Callable[[str], bool]] = get_validator(validator_name)
         self.has_strong_validator: bool = bool(
@@ -98,9 +100,14 @@ class RegexRecognizer(Recognizer):
         ctx_matched, _ = self.context_enhancer.evaluate(
             sample.column, expected_by_name=expected_by_name
         )
+        allow_content = (
+            self.allow_content_without_name
+            and not (expected_by_name or ctx_matched)
+            and is_placeholder_column_name(sample.column)
+        )
 
         # Si la entidad exige contexto obligatorio (o es de solo nombre) y no hay contexto, no aplica
-        if self.requires_context and not (expected_by_name or ctx_matched):
+        if self.requires_context and not (expected_by_name or ctx_matched or allow_content):
             return EntityScore(
                 entity=self.entity,
                 group=self.group,
@@ -199,9 +206,11 @@ class RegexRecognizer(Recognizer):
             min(self.min_match_rate, 0.15) if use_free_text else self.min_match_rate
         )
 
-        # Penalización si el contexto es recomendado ("recommended") pero no está en el nombre
+        # Penalización si el contexto es recomendado o si se evalúa sin nombre
         base_score = match_rate
-        if self.context_mode == "recommended" and not (expected_by_name or ctx_matched):
+        if (self.context_mode == "recommended" or allow_content) and not (
+            expected_by_name or ctx_matched
+        ):
             base_score *= 0.65
 
         adj_score, ctx_matched, ctx_delta = self.context_enhancer.boost(
@@ -209,7 +218,7 @@ class RegexRecognizer(Recognizer):
         )
 
         passed = match_rate >= effective_threshold and (
-            not self.requires_context or expected_by_name or ctx_matched
+            not self.requires_context or expected_by_name or ctx_matched or allow_content
         )
 
         return EntityScore(

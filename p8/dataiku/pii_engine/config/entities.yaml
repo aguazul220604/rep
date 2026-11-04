@@ -13,6 +13,9 @@
 #   recommended -> si el nombre no aporta contexto, el score se penaliza
 #   required    -> requiere que el nombre sugiera la entidad o tenga palabras de contexto
 #   name_only   -> solo dispara si el nombre fue clasificado en esta entidad; contenido solo valida tipo
+#
+# allow_content_without_name: true permite evaluar una entidad `required` por contenido
+# cuando la columna es un placeholder (Unnamed: N o vacía); la fusión marca needs_review.
 
 version: "1.0"
 
@@ -168,6 +171,7 @@ entities:
     validator: codigo_postal_range
     context_words: [codigo postal, cod postal, postal code, cpl, cp, zip, codigopostal]
     context_mode: required
+    allow_content_without_name: true
     min_match_rate: 0.70
     allow_in_free_text: false
 
@@ -236,6 +240,7 @@ entities:
       - '^\d{10}$'
     context_words: [geid, ge id]
     context_mode: required
+    allow_content_without_name: true
     min_match_rate: 0.70
     allow_in_free_text: false
 

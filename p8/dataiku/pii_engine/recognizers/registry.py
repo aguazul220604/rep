@@ -109,6 +109,9 @@ class RecognizerRegistry:
                     negative_context_words=neg_words,
                     context_mode=context_mode,
                     allow_in_free_text=bool(spec.get("allow_in_free_text", True)),
+                    allow_content_without_name=bool(
+                        spec.get("allow_content_without_name", False)
+                    ),
                 )
             elif strategy == "dictionary":
                 cat_rel = spec.get("catalog")

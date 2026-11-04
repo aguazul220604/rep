@@ -11,6 +11,7 @@ from typing import Iterable, List, Tuple
 
 _CAMEL = re.compile(r"([a-z0-9])([A-Z])")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_PLACEHOLDER_NAME_RE = re.compile(r"^(?:unnamed(?: \d+)?)?$")
 
 
 def normalize_column_name(name: str) -> str:
@@ -24,6 +25,14 @@ def normalize_column_name(name: str) -> str:
     s = s.lower()
     s = _NON_ALNUM.sub(" ", s)
     return s.strip()
+
+
+def is_placeholder_normalized_name(normalized_name: str) -> bool:
+    return bool(_PLACEHOLDER_NAME_RE.match(normalized_name or ""))
+
+
+def is_placeholder_column_name(name: str) -> bool:
+    return is_placeholder_normalized_name(normalize_column_name(name))
 
 
 def normalize_text_value(val: str) -> str:

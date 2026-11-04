@@ -21,7 +21,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 from pii_engine.core.schema import NO_ENTITY, OTRO_PII, NamePrediction
-from pii_engine.recognizers.context import normalize_column_name
+from pii_engine.recognizers.context import (
+    is_placeholder_normalized_name,
+    normalize_column_name,
+)
 
 # ---------------------------------------------------------------------------
 # Reglas ordenadas de `regex.txt` (40 entidades) como respaldo y refuerzo
@@ -68,8 +71,6 @@ _NAME_REGEX_RULES: List[Tuple[str, re.Pattern]] = [
     ("ip", re.compile(r"(ip isp|ip maquina|ip pc solctd|(^|[^a-z])(ip|ipv4|ipv6)([^a-z]|$))")),
     (OTRO_PII, re.compile(r"(credencial[ _.-]?(ine|ife|elector|(para[ _.-]?)?votar)|idmex|voter[ _.-]?id|(^|[^a-z])(ine|ife|elector|id[ _.-]?mex)([^a-z]|$)|corres destario fi bic|ent intermediaria bic|rec beneficiari institution|seccion sol|seccion res|des remesa|firmae operalfa|dato particular|(^|[^a-z])(edad|age)([^a-z]|$)|num identif|num id|dispositivo|medioacceso|tok req|sirh|numdepend|dependientes|ptrmadre|indicadorextranjero|num depend|numautos|car dlr|num autos|num rollover|cnt ptsmaxsbtasa|actacons|creactecto|num digverificador|num negafiliado|vc issuer code|cm cte pais riesgo|cve|dleq|delq|extn|ext[0-9]|extension oficina|(^|[^a-z])ext([^a-z]|$))")),
 ]
-
-_PLACEHOLDER_NAME_RE = re.compile(r"^unnamed(?: \d+)?$")
 
 # Campos que se guardan en la caché de predicciones por nombre normalizado.
 _CACHE_FIELDS = (
@@ -271,7 +272,7 @@ class NameModelPredictor:
         else:
             is_pii = [bool(score >= bin_thresh) for score in bin_scores]
 
-        placeholder_flags = [bool(_PLACEHOLDER_NAME_RE.match(norm)) for norm in norms]
+        placeholder_flags = [is_placeholder_normalized_name(norm) for norm in norms]
 
         # ------------------------------------------------------------------
         # 3. Modelo de entidad solo para columnas PII no resueltas por regex

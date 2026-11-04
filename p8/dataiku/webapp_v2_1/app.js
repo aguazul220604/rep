@@ -13,6 +13,11 @@ function apiUrl(path) {
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
+function setChecked(sel, value) {
+  const el = $(sel);
+  if (el) el.checked = value;
+}
+
 function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = String(s ?? "");
@@ -498,9 +503,9 @@ function clearAll() {
   state.activeFile = ALL;
   state.entity = "";
   $("#in-filter").value = "";
-  $("#in-only-pii").checked = false;
-  $("#in-only-review").checked = false;
-  $("#in-only-empty").checked = false;
+  setChecked("#in-only-pii", false);
+  setChecked("#in-only-review", false);
+  setChecked("#in-only-empty", false);
   $("#in-entity").value = "";
   const sf = $("#selExportFileFmt");
   if (sf) sf.value = "csv";
@@ -533,11 +538,11 @@ async function onSubmit(e) {
     state.entity = "";
     $("#in-filter").value = "";
     state.filter = "";
-    $("#in-only-pii").checked = false;
+    setChecked("#in-only-pii", false);
     state.onlyPii = false;
-    $("#in-only-review").checked = false;
+    setChecked("#in-only-review", false);
     state.onlyReview = false;
-    $("#in-only-empty").checked = false;
+    setChecked("#in-only-empty", false);
     state.onlyEmpty = false;
     renderAll();
     const pii = state.columns.filter((c) => c.is_pii).length;
@@ -699,12 +704,9 @@ function resetFileFilters() {
   state.onlyEmpty = false;
   const se = $("#in-entity");
   if (se) se.value = "";
-  const sp = $("#in-only-pii");
-  if (sp) sp.checked = false;
-  const sr = $("#in-only-review");
-  if (sr) sr.checked = false;
-  const sem = $("#in-only-empty");
-  if (sem) sem.checked = false;
+  setChecked("#in-only-pii", false);
+  setChecked("#in-only-review", false);
+  setChecked("#in-only-empty", false);
 }
 
 function setActiveFile(f) {
@@ -752,19 +754,23 @@ function boot() {
     renderFileHead();
     renderTable();
   });
-  $("#in-only-pii").addEventListener("change", (e) => {
+  const bindChange = (sel, fn) => {
+    const el = $(sel);
+    if (el) el.addEventListener("change", fn);
+  };
+  bindChange("#in-only-pii", (e) => {
     state.onlyPii = e.target.checked;
     renderTable();
   });
-  $("#in-only-review").addEventListener("change", (e) => {
+  bindChange("#in-only-review", (e) => {
     state.onlyReview = e.target.checked;
     renderTable();
   });
-  $("#in-only-empty").addEventListener("change", (e) => {
+  bindChange("#in-only-empty", (e) => {
     state.onlyEmpty = e.target.checked;
     renderTable();
   });
-  $("#in-entity").addEventListener("change", (e) => {
+  bindChange("#in-entity", (e) => {
     state.entity = e.target.value;
     renderTable();
   });

@@ -170,8 +170,7 @@ entities:
       - '^\d{5}$'
     validator: codigo_postal_range
     context_words: [codigo postal, cod postal, postal code, cpl, cp, zip, codigopostal]
-    context_mode: required
-    allow_content_without_name: true
+    context_mode: recommended
     min_match_rate: 0.70
     allow_in_free_text: false
 
@@ -239,8 +238,7 @@ entities:
     patterns:
       - '^\d{10}$'
     context_words: [geid, ge id]
-    context_mode: required
-    allow_content_without_name: true
+    context_mode: recommended
     min_match_rate: 0.70
     allow_in_free_text: false
 

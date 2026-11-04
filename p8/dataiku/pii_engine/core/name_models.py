@@ -69,6 +69,8 @@ _NAME_REGEX_RULES: List[Tuple[str, re.Pattern]] = [
     (OTRO_PII, re.compile(r"(credencial[ _.-]?(ine|ife|elector|(para[ _.-]?)?votar)|idmex|voter[ _.-]?id|(^|[^a-z])(ine|ife|elector|id[ _.-]?mex)([^a-z]|$)|corres destario fi bic|ent intermediaria bic|rec beneficiari institution|seccion sol|seccion res|des remesa|firmae operalfa|dato particular|(^|[^a-z])(edad|age)([^a-z]|$)|num identif|num id|dispositivo|medioacceso|tok req|sirh|numdepend|dependientes|ptrmadre|indicadorextranjero|num depend|numautos|car dlr|num autos|num rollover|cnt ptsmaxsbtasa|actacons|creactecto|num digverificador|num negafiliado|vc issuer code|cm cte pais riesgo|cve|dleq|delq|extn|ext[0-9]|extension oficina|(^|[^a-z])ext([^a-z]|$))")),
 ]
 
+_PLACEHOLDER_NAME_RE = re.compile(r"^unnamed(?: \d+)?$")
+
 # Campos que se guardan en la caché de predicciones por nombre normalizado.
 _CACHE_FIELDS = (
     "is_pii_name",
@@ -269,6 +271,8 @@ class NameModelPredictor:
         else:
             is_pii = [bool(score >= bin_thresh) for score in bin_scores]
 
+        placeholder_flags = [bool(_PLACEHOLDER_NAME_RE.match(norm)) for norm in norms]
+
         # ------------------------------------------------------------------
         # 3. Modelo de entidad solo para columnas PII no resueltas por regex
         # ------------------------------------------------------------------
@@ -279,6 +283,8 @@ class NameModelPredictor:
 
         need_entity: List[int] = []
         for i in range(n):
+            if placeholder_flags[i]:
+                continue
             if self.binary_gate_enabled and not is_pii[i]:
                 continue
             if self._is_fast_path(rules[i]):
@@ -317,6 +323,22 @@ class NameModelPredictor:
         # 4. Combinar y cachear
         # ------------------------------------------------------------------
         for i in range(n):
+            if placeholder_flags[i]:
+                prediction = NamePrediction(
+                    column=columns[pending[i]],
+                    normalized_name=norms[i],
+                    is_pii_name=False,
+                    score_name=0.0,
+                    expected_entity=None,
+                    prob_entity_name=0.0,
+                    entity_top1=None,
+                    abstained=True,
+                    source="rules",
+                )
+                results[columns[pending[i]]] = prediction
+                self._cache_put(norms[i], prediction)
+                continue
+
             rule_entity = rules[i]
             expected_entity = ent_pred[i]
             prob_entity = float(ent_prob[i])

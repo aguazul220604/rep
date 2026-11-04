@@ -142,6 +142,19 @@ class TestRegistryAndSampling(unittest.TestCase):
         samp_free = sample_column(s_free, sample_size=10)
         self.assertTrue(samp_free.is_free_text)
 
+    def test_sampling_float_integer_values_have_no_decimal_suffix(self):
+        s = pd.Series([7721630414.0, 42310.0, None], name="mezcla")
+        samp = sample_column(s, sample_size=10)
+        self.assertIn("7721630414", samp.values)
+        self.assertIn("42310", samp.values)
+        self.assertNotIn("7721630414.0", samp.values)
+        self.assertNotIn("42310.0", samp.values)
+
+        s_obj = pd.Series(["42310.0", "15420.50", None], name="mixto")
+        samp_obj = sample_column(s_obj, sample_size=10)
+        self.assertIn("42310", samp_obj.values)
+        self.assertIn("15420.50", samp_obj.values)
+
 
 class TestEndToEndAnalyze(unittest.TestCase):
     def test_analyze_mixed_columns(self):
@@ -213,6 +226,18 @@ class TestEndToEndAnalyze(unittest.TestCase):
         self.assertEqual(r_conf.entity, "rfc")
         self.assertEqual(r_conf.evidence, "content")
         self.assertTrue(r_conf.needs_review)
+
+    def test_float_phone_and_postal_code_with_nulls_are_pii(self):
+        df = pd.DataFrame({
+            "telefono": [7721630414.0, 7721630414.0, None],
+            "codigo postal": [42310.0, 42310.0, None],
+        })
+        results = {r.column: r for r in analyze(df, table_meta="tabla_numerica")}
+
+        self.assertTrue(results["telefono"].pii)
+        self.assertEqual(results["telefono"].entity, "telefono")
+        self.assertTrue(results["codigo postal"].pii)
+        self.assertEqual(results["codigo postal"].entity, "codigo_postal")
 
     def test_model_recognizer_interface(self):
         """Verifica que ModelRecognizer funciona cuando se registra un modelo mock en ContentModelLoader."""
@@ -545,6 +570,78 @@ class TestNameResolutionOptimizations(unittest.TestCase):
             self.assertIn("content:wired-v1", res["campo_q"].model_version)
         finally:
             ContentModelLoader.clear_cache()
+
+    def test_scan_prefers_dictionary_over_content_model(self):
+        class Binary:
+            def predict_proba(self, X):
+                return np.asarray([[0.90, 0.10] for _ in X])
+
+        class Content:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.95, "direccion": 0.01, "empresa": 0.01, "nombre": 0.01, "otro": 0.02}
+                    total = sum(p.values())
+                    rows.append([p[c] / total for c in self.classes_])
+                return np.asarray(rows)
+
+        content_key = "test/sexo/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": Content(),
+                "classes": list(Content.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "sexo-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(
+                binary_model_bundle={"model": Binary(), "threshold": 0.50},
+                content_model_path=content_key,
+            )
+            df = pd.DataFrame({"s": ["masculino", "femenino", "masculino"]})
+            result = engine.analyze(df, table_meta="tabla_sexo")[0]
+
+            self.assertTrue(result.pii)
+            self.assertEqual(result.entity, "sexo")
+        finally:
+            ContentModelLoader.clear_cache()
+
+    def test_unnamed_empty_column_is_not_pii(self):
+        class Binary:
+            def predict_proba(self, X):
+                return np.asarray([[0.05, 0.95] for _ in X])
+
+        class Entity:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.02, "direccion": 0.02, "empresa": 0.02, "nombre": 0.90, "otro": 0.04}
+                    rows.append([p[c] for c in self.classes_])
+                return np.asarray(rows)
+
+        engine = PIIAnalyzer(
+            binary_model_bundle={"model": Binary(), "threshold": 0.50},
+            entity_model_bundle={
+                "model": Entity(),
+                "classes": list(Entity.classes_),
+                "temperature": 1.0,
+                "min_confidence": 0.45,
+            },
+        )
+        df = pd.DataFrame({"Unnamed: 13": [None, None, None]})
+        result = engine.analyze(df, table_meta="tabla_unnamed")[0]
+
+        self.assertFalse(result.pii)
+        self.assertEqual(result.entity, NO_ENTITY)
 
     def tearDown(self):
         ContentModelLoader.clear_cache()

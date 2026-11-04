@@ -32,6 +32,8 @@ from pii_engine.core.schema import (
 )
 from pii_engine.recognizers.registry import DEFAULT_CONFIG_DIR, RecognizerRegistry
 
+_GROUP_PRIORITY = {"A": 0, "C": 1, "B": 2, "D": 3, "E": 4}
+
 
 class PIIAnalyzer:
     """
@@ -93,7 +95,8 @@ class PIIAnalyzer:
         """
         Escanea la muestra contra todas las entidades elegibles por contenido
         y devuelve el mejor `EntityScore` que supere su umbral (o el de mayor score).
-        Prioriza Grupo A con validador fuerte en caso de empate.
+        Prioriza validadores fuertes del Grupo A y, después, recognizers
+        determinísticos (Grupos C y B) sobre el modelo de contenido (Grupo D).
         """
         if sample.sample_size == 0:
             return None
@@ -110,12 +113,19 @@ class PIIAnalyzer:
                 if best_passed is None:
                     best_passed = es
                 else:
-                    # Prioridad: 1) Validador fuerte del Grupo A, 2) Mayor score
-                    curr_key = (1 if es.used_validator else 0, es.score, es.match_rate)
+                    # Prioridad: 1) validador fuerte, 2) Grupo A/C/B/D,
+                    # 3) match_rate, 4) score
+                    curr_key = (
+                        1 if es.used_validator else 0,
+                        -_GROUP_PRIORITY.get(es.group, 9),
+                        es.match_rate,
+                        es.score,
+                    )
                     prev_key = (
                         1 if best_passed.used_validator else 0,
-                        best_passed.score,
+                        -_GROUP_PRIORITY.get(best_passed.group, 9),
                         best_passed.match_rate,
+                        best_passed.score,
                     )
                     if curr_key > prev_key:
                         best_passed = es

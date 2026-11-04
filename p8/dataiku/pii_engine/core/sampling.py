@@ -24,6 +24,8 @@ from pii_engine.core.schema import ColumnSample
 DEFAULT_SAMPLE_SIZE = 2000
 DEFAULT_SEED = 42
 
+_INTEGRAL_FLOAT_SUFFIX = r"^(-?\d+)\.0+$"
+
 
 def detect_free_text(
     values: List[str],
@@ -93,6 +95,7 @@ def _sample_polars_series(
         )
 
     as_str = non_null.cast(pl.Utf8, strict=False).drop_nulls().str.strip_chars()
+    as_str = as_str.str.replace_all(_INTEGRAL_FLOAT_SUFFIX, "$1")
     as_str = as_str.filter(as_str != "")
     total_non_null = len(as_str)
 
@@ -160,6 +163,7 @@ def _sample_pandas_series(
         )
 
     as_str = non_null.astype(str).str.strip()
+    as_str = as_str.str.replace(_INTEGRAL_FLOAT_SUFFIX, r"\1", regex=True)
     as_str = as_str[as_str != ""]
     total_non_null = len(as_str)
 

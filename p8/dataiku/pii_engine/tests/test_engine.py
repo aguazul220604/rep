@@ -239,6 +239,34 @@ class TestEndToEndAnalyze(unittest.TestCase):
         self.assertTrue(results["codigo postal"].pii)
         self.assertEqual(results["codigo postal"].entity, "codigo_postal")
 
+    def test_iban_with_and_without_spaces(self):
+        df = pd.DataFrame({
+            "iban_con_espacios": ["ES91 2100 0418 45 0200051332"] * 3,
+            "iban_compacto": ["ES9121000418450200051332"] * 3,
+            "iban_invalido": ["ES0021000418450200051332"] * 3,
+        })
+        results = {r.column: r for r in analyze(df, table_meta="tabla_iban")}
+
+        self.assertTrue(results["iban_con_espacios"].pii)
+        self.assertEqual(results["iban_con_espacios"].entity, "iban")
+        self.assertTrue(results["iban_compacto"].pii)
+        self.assertEqual(results["iban_compacto"].entity, "iban")
+        self.assertFalse(results["iban_invalido"].pii)
+
+    def test_coordinates_content_detection(self):
+        df = pd.DataFrame({"c": ["19.432608, -99.133209"] * 3})
+        result = analyze(df, table_meta="tabla_coordenadas")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "coordenadas")
+
+    def test_valid_clabe_with_known_value(self):
+        df = pd.DataFrame({"clabe": ["218001234567890103"] * 3})
+        result = analyze(df, table_meta="tabla_clabe")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "clabe")
+
     def test_model_recognizer_interface(self):
         """Verifica que ModelRecognizer funciona cuando se registra un modelo mock en ContentModelLoader."""
         class DummyContentModel:

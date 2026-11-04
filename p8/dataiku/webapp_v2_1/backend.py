@@ -279,7 +279,9 @@ def process_table():
 
 
 EXPORT_XLSX_HEADER = ["Archivo", "Nombre de Columna", "Prediccion",
-                      "Probabilidad PII (%)", "Entidad", "Probabilidad Entidad (%)"]
+                      "Probabilidad PII (%)", "Evidencia", "Requiere revision",
+                      "Entidad", "Probabilidad Entidad (%)", "Muestra"]
+_EXPORT_COL_COUNT = len(EXPORT_XLSX_HEADER)
 
 
 def _safe_xlsx_filename(name):
@@ -312,12 +314,19 @@ def export_xlsx():
             cell.font = head_font
             cell.alignment = Alignment(vertical="center")
         for r in rows:
-            vals = list(r)[:6] + [""] * max(0, 6 - len(r))
+            vals = list(r)[:_EXPORT_COL_COUNT]
+            vals += [""] * max(0, _EXPORT_COL_COUNT - len(vals))
             out = []
-            for idx, v in enumerate(vals[:6]):
-                if idx in (3, 5) and v not in (None, ""):
+            for idx, v in enumerate(vals):
+                if idx in (3, 7) and v not in (None, ""):
                     try:
                         out.append(float(v))
+                        continue
+                    except (TypeError, ValueError):
+                        pass
+                if idx == 8 and v not in (None, ""):
+                    try:
+                        out.append(int(float(v)))
                         continue
                     except (TypeError, ValueError):
                         pass
@@ -326,7 +335,7 @@ def export_xlsx():
         for col in ws.columns:
             width = max((len(str(c.value or "")) for c in col), default=10)
             ws.column_dimensions[col[0].column_letter].width = min(width + 2, 48)
-        for row in ws.iter_rows(min_row=2, min_col=4, max_col=6):
+        for row in ws.iter_rows(min_row=2, min_col=4, max_col=8):
             for cell in row:
                 if isinstance(cell.value, float):
                     cell.number_format = '0.00'

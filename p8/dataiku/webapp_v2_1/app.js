@@ -20,12 +20,24 @@ function escapeHtml(s) {
 }
 const pctText = (p) => (Number(p || 0) * 100).toFixed(2) + "%";
 
+const EVIDENCE_LABELS = {
+  name: "Nombre",
+  content: "Contenido",
+  both: "Nombre + contenido",
+};
+const isEmptyContent = (c) => Number(c.sample_size || 0) === 0;
+function evidenceText(c) {
+  return EVIDENCE_LABELS[c.evidence] || "—";
+}
+
 const ALL = "__all";
 const state = {
   columns: [],
   busy: false,
   filter: "",
   onlyPii: false,
+  onlyReview: false,
+  onlyEmpty: false,
   activeFile: ALL,
   entity: "",
 };
@@ -99,6 +111,8 @@ function visibleColumns() {
     if (state.activeFile !== ALL && (c.source_file || "") !== state.activeFile)
       return false;
     if (state.onlyPii && !c.is_pii) return false;
+    if (state.onlyReview && !c.needs_review) return false;
+    if (state.onlyEmpty && Number(c.sample_size || 0) !== 0) return false;
     if (state.entity && (c.entity || "") !== state.entity) return false;
     if (!q || scoped) return true;
     return String(c.source_file ?? "")
@@ -110,8 +124,11 @@ function visibleColumns() {
 function renderMeta() {
   const total = state.columns.length;
   const pii = state.columns.filter((c) => c.is_pii).length;
+  const review = state.columns.filter((c) => c.needs_review).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
-  $("#resultsMeta").textContent = `${total} columnas · ${pii} PII (${pct}%)`;
+  $("#resultsMeta").textContent =
+    `${total} columnas · ${pii} PII (${pct}%)` +
+    (review ? ` · ${review} requieren revisión` : "");
 }
 
 function renderKPIs() {
@@ -123,6 +140,8 @@ function renderKPIs() {
   }
   const total = state.columns.length;
   const pii = state.columns.filter((c) => c.is_pii).length;
+  const review = state.columns.filter((c) => c.needs_review).length;
+  const empty = state.columns.filter(isEmptyContent).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
   const files = getFiles().length;
   const top = topEntities(state.columns, 1)[0];
@@ -130,6 +149,8 @@ function renderKPIs() {
   el.innerHTML =
     `<div class="kpi"><span class="kpi-label">Columnas</span><span class="kpi-value">${total}</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
+    `<div class="kpi"><span class="kpi-label">Revisión</span><span class="kpi-value">${review}</span></div>` +
+    `<div class="kpi"><span class="kpi-label">Sin contenido</span><span class="kpi-value">${empty}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Top entidad</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
 }
@@ -307,7 +328,7 @@ function renderTable() {
   if (!rows.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = 9;
     td.textContent = state.columns.length
       ? "Ninguna columna coincide con el filtro"
       : "Nada inspeccionado todavía";
@@ -318,12 +339,20 @@ function renderTable() {
   const showFile = state.activeFile === ALL;
   for (const col of rows) {
     const tr = document.createElement("tr");
-    if (col.is_pii) tr.className = "pii-row";
+    if (col.is_pii) tr.classList.add("pii-row");
+    if (col.needs_review) tr.classList.add("needs-review");
+    if (isEmptyContent(col)) tr.classList.add("empty-content");
     const ent = col.entity ?? "—";
     const entP =
       col.entity_probability === null || col.entity_probability === undefined
         ? "—"
         : pctText(col.entity_probability);
+    const reviewCell = col.needs_review
+      ? `<span class="status-badge warn" title="Baja confianza o sin contenido; requiere revisión humana">Revisar</span>`
+      : `<span class="muted">—</span>`;
+    const sampleCell = isEmptyContent(col)
+      ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó solo en el nombre">Sin contenido</span>`
+      : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
     tr.innerHTML =
       (showFile
         ? `<td>${escapeHtml(col.source_file || "")}</td>`
@@ -331,7 +360,10 @@ function renderTable() {
       `<td><strong>${escapeHtml(col.name)}</strong></td>` +
       `<td><span class="status-badge ${col.is_pii ? "danger" : "success"}">${col.is_pii ? "PII" : "NO PII"}</span></td>` +
       `<td><span class="prob-num">${pctText(col.pii_probability)}</span></td>` +
-      `<td>${escapeHtml(ent)}</td><td>${escapeHtml(entP)}</td>`;
+      `<td title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
+      `<td>${reviewCell}</td>` +
+      `<td>${escapeHtml(ent)}</td><td>${escapeHtml(entP)}</td>` +
+      `<td>${sampleCell}</td>`;
     // Oculta la columna Archivo cuando ya se encuentra dentro de un tab de archivo.
     tb.append(tr);
   }
@@ -461,10 +493,14 @@ function clearAll() {
   state.columns = [];
   state.filter = "";
   state.onlyPii = false;
+  state.onlyReview = false;
+  state.onlyEmpty = false;
   state.activeFile = ALL;
   state.entity = "";
   $("#in-filter").value = "";
   $("#in-only-pii").checked = false;
+  $("#in-only-review").checked = false;
+  $("#in-only-empty").checked = false;
   $("#in-entity").value = "";
   const sf = $("#selExportFileFmt");
   if (sf) sf.value = "csv";
@@ -499,15 +535,25 @@ async function onSubmit(e) {
     state.filter = "";
     $("#in-only-pii").checked = false;
     state.onlyPii = false;
+    $("#in-only-review").checked = false;
+    state.onlyReview = false;
+    $("#in-only-empty").checked = false;
+    state.onlyEmpty = false;
     renderAll();
     const pii = state.columns.filter((c) => c.is_pii).length;
+    const nEmpty = state.columns.filter(isEmptyContent).length;
     const nFiles = getFiles().length;
     $("#upload-result").textContent =
       nFiles > 1
         ? `${nFiles} archivos · ${state.columns.length} columnas · ${pii} PII. Estás en Todos: elige una tarjeta.`
         : `${state.columns.length} columnas · ${pii} PII.`;
-    if (data.warnings && data.warnings.length)
-      showAlert(data.warnings.join(" | "), "warn");
+    const msgs = [];
+    if (data.warnings && data.warnings.length) msgs.push(...data.warnings);
+    if (nEmpty)
+      msgs.push(
+        `${nEmpty} columnas no tienen contenido; su clasificación se basó solo en el nombre y requiere revisión.`,
+      );
+    if (msgs.length) showAlert(msgs.join(" | "), "warn");
   } catch (err) {
     showAlert(err.message || "Error desconocido al procesar las tablas.");
   } finally {
@@ -529,8 +575,11 @@ const EXPORT_HEADER = [
   "Nombre de Columna",
   "Prediccion",
   "Probabilidad PII (%)",
+  "Evidencia",
+  "Requiere revision",
   "Entidad",
   "Probabilidad Entidad (%)",
+  "Muestra",
 ];
 
 function buildExportRows(cols) {
@@ -539,10 +588,13 @@ function buildExportRows(cols) {
     c.name,
     c.is_pii ? "PII" : "NO PII",
     (Number(c.pii_probability || 0) * 100).toFixed(2),
+    evidenceText(c) === "—" ? "" : evidenceText(c),
+    c.needs_review ? "Si" : "No",
     c.entity ?? "",
     c.entity_probability === null || c.entity_probability === undefined
       ? ""
       : (Number(c.entity_probability) * 100).toFixed(2),
+    Number(c.sample_size || 0),
   ]);
 }
 
@@ -643,10 +695,16 @@ function handleGenerateReport() {
 function resetFileFilters() {
   state.entity = "";
   state.onlyPii = false;
+  state.onlyReview = false;
+  state.onlyEmpty = false;
   const se = $("#in-entity");
   if (se) se.value = "";
   const sp = $("#in-only-pii");
   if (sp) sp.checked = false;
+  const sr = $("#in-only-review");
+  if (sr) sr.checked = false;
+  const sem = $("#in-only-empty");
+  if (sem) sem.checked = false;
 }
 
 function setActiveFile(f) {
@@ -696,6 +754,14 @@ function boot() {
   });
   $("#in-only-pii").addEventListener("change", (e) => {
     state.onlyPii = e.target.checked;
+    renderTable();
+  });
+  $("#in-only-review").addEventListener("change", (e) => {
+    state.onlyReview = e.target.checked;
+    renderTable();
+  });
+  $("#in-only-empty").addEventListener("change", (e) => {
+    state.onlyEmpty = e.target.checked;
     renderTable();
   });
   $("#in-entity").addEventListener("change", (e) => {

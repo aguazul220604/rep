@@ -1512,10 +1512,20 @@
             class="field"
             style="flex: 0 1 auto; margin-bottom: 0; align-self: flex-end"
           >
-            <label class="choice"
-              ><input type="checkbox" id="in-only-pii" />
-              <span>Solo PII</span></label
-            >
+            <div class="choice-row">
+              <label class="choice"
+                ><input type="checkbox" id="in-only-pii" />
+                <span>Solo PII</span></label
+              >
+              <label class="choice"
+                ><input type="checkbox" id="in-only-review" />
+                <span>Solo revisión</span></label
+              >
+              <label class="choice"
+                ><input type="checkbox" id="in-only-empty" />
+                <span>Solo sin contenido</span></label
+              >
+            </div>
           </div>
         </div>
         <div id="loadingSkeleton" hidden>
@@ -1531,17 +1541,26 @@
                 <th scope="col">Columna</th>
                 <th scope="col">Predicción</th>
                 <th scope="col">Prob. PII</th>
+                <th scope="col">Evidencia</th>
+                <th scope="col">Revisión</th>
                 <th scope="col">Entidad</th>
                 <th scope="col">Prob. entidad</th>
+                <th scope="col">Muestra</th>
               </tr>
             </thead>
             <tbody id="piiListBody">
               <tr>
-                <td colspan="6">Nada inspeccionado todavía</td>
+                <td colspan="9">Nada inspeccionado todavía</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p class="field-note" id="tableLegend">
+          Evidencia: <strong>Nombre</strong> = sin contenido;
+          <strong>Contenido</strong> = por valores;
+          <strong>Nombre + contenido</strong> = ambos. <strong>Revisar</strong>
+          indica baja confianza o falta de contenido.
+        </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
         <div class="dl-box" id="fileExportRow">
           <p class="dl-title">Descargar resultados de análisis</p>

@@ -671,6 +671,88 @@ class TestNameResolutionOptimizations(unittest.TestCase):
         self.assertFalse(result.pii)
         self.assertEqual(result.entity, NO_ENTITY)
 
+    def test_lugar_nacimiento_content_only_without_name(self):
+        class Content:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.95, "direccion": 0.01, "empresa": 0.01, "nombre": 0.01, "otro": 0.02}
+                    total = sum(p.values())
+                    rows.append([p[c] / total for c in self.classes_])
+                return np.asarray(rows)
+
+        content_key = "test/lugar/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": Content(),
+                "classes": list(Content.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "lugar-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(content_model_path=content_key)
+            df = pd.DataFrame({
+                "Unnamed: 7": ["Hidalgo", "Guadalajara", "Querétaro", "Ciudad de México", "Michoacán"],
+            })
+            result = engine.analyze(df, table_meta="tabla_lugar")[0]
+
+            self.assertTrue(result.pii)
+            self.assertEqual(result.entity, "lugar_nacimiento")
+            self.assertTrue(result.needs_review)
+        finally:
+            ContentModelLoader.clear_cache()
+
+    def test_address_context_wins_over_lugar_nacimiento(self):
+        class Binary:
+            def predict_proba(self, X):
+                return np.asarray([[0.90, 0.10] for _ in X])
+
+        class Content:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.01, "direccion": 0.95, "empresa": 0.01, "nombre": 0.01, "otro": 0.02}
+                    total = sum(p.values())
+                    rows.append([p[c] / total for c in self.classes_])
+                return np.asarray(rows)
+
+        content_key = "test/direccion/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": Content(),
+                "classes": list(Content.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "direccion-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(
+                binary_model_bundle={"model": Binary(), "threshold": 0.50},
+                content_model_path=content_key,
+            )
+            df = pd.DataFrame({
+                "estado": ["Hidalgo", "Guadalajara", "Querétaro", "Ciudad de México", "Michoacán"],
+            })
+            result = engine.analyze(df, table_meta="tabla_direccion")[0]
+
+            self.assertTrue(result.pii)
+            self.assertEqual(result.entity, "direccion")
+        finally:
+            ContentModelLoader.clear_cache()
+
     def tearDown(self):
         ContentModelLoader.clear_cache()
         ContentModelScorer.clear_cache()

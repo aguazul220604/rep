@@ -95,8 +95,9 @@ class PIIAnalyzer:
         """
         Escanea la muestra contra todas las entidades elegibles por contenido
         y devuelve el mejor `EntityScore` que supere su umbral (o el de mayor score).
-        Prioriza validadores fuertes del Grupo A y, después, recognizers
-        determinísticos (Grupos C y B) sobre el modelo de contenido (Grupo D).
+        Prioriza validadores fuertes del Grupo A, luego el contexto del nombre,
+        y después recognizers determinísticos (Grupos C y B) sobre el modelo
+        de contenido (Grupo D).
         """
         if sample.sample_size == 0:
             return None
@@ -113,16 +114,18 @@ class PIIAnalyzer:
                 if best_passed is None:
                     best_passed = es
                 else:
-                    # Prioridad: 1) validador fuerte, 2) Grupo A/C/B/D,
-                    # 3) match_rate, 4) score
+                    # Prioridad: 1) validador fuerte, 2) contexto del nombre,
+                    # 3) Grupo A/C/B/D, 4) match_rate, 5) score
                     curr_key = (
                         1 if es.used_validator else 0,
+                        1 if es.context_matched else 0,
                         -_GROUP_PRIORITY.get(es.group, 9),
                         es.match_rate,
                         es.score,
                     )
                     prev_key = (
                         1 if best_passed.used_validator else 0,
+                        1 if best_passed.context_matched else 0,
                         -_GROUP_PRIORITY.get(best_passed.group, 9),
                         best_passed.match_rate,
                         best_passed.score,

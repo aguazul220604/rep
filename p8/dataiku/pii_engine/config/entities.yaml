@@ -370,7 +370,7 @@ entities:
     strategy: dictionary
     catalog: catalogs/lugar_nacimiento.txt
     context_words: [lugar nac, pais nac, ciudad nac, entidad nac, edo nac, estado nac, municipio nac, birth place, place of birth]
-    context_mode: required
+    context_mode: recommended
     min_match_rate: 0.55
 
   # ===========================================================================

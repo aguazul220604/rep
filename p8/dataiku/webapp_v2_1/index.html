@@ -1414,7 +1414,7 @@
               >
             </h1>
             <p class="masthead-sub">
-              Cognitive Services and Machine Learning Core of Excellence
+              Cognitive Services and Machine Learning Center of Excellence
             </p>
           </div>
         </div>
@@ -1510,7 +1510,7 @@
           </div>
           <div class="field" style="flex: 1 1 180px; margin-bottom: 0">
             <label class="field-label" for="in-classification"
-              >Clasificación Citi</label
+              >Clasificación</label
             >
             <select class="select mono" id="in-classification">
               <option value="">Todas</option>
@@ -1536,11 +1536,6 @@
             </div>
           </div>
         </div>
-        <div id="loadingSkeleton" hidden>
-          <div class="skeleton is-tall"></div>
-          <div class="skeleton"></div>
-          <div class="skeleton is-short"></div>
-        </div>
         <div class="table-wrap" id="tableWrap">
           <table class="table" id="piiTable" aria-label="Resultado por columna">
             <thead>
@@ -1553,7 +1548,7 @@
                 <th scope="col">Revisión</th>
                 <th scope="col">Entidad</th>
                 <th scope="col">Prob. entidad</th>
-                <th scope="col">Clasificación Citi</th>
+                <th scope="col">Clasificación</th>
                 <th scope="col">Muestra</th>
               </tr>
             </thead>
@@ -1569,7 +1564,7 @@
           <strong>Contenido</strong> = por valores;
           <strong>Nombre + contenido</strong> = ambos. <strong>Revisar</strong>
           indica baja confianza o falta de contenido. La
-          <strong>Clasificación Citi</strong> es una recomendación derivada de la
+          <strong>Clasificación</strong> es una recomendación derivada de la
           entidad detectada y puede requerir validación de Compliance.
         </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
@@ -1639,6 +1634,23 @@
         </footer>
       </article>
     </main>
+    <div
+      id="loadingOverlay"
+      class="loading-overlay"
+      hidden
+      role="status"
+      aria-live="polite"
+      aria-label="Analizando dataset"
+    >
+      <div class="loading-panel">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p class="loading-title">Analizando dataset…</p>
+        <p class="loading-sub">
+          Detectando y clasificando datos PII. Esto puede tardar unos segundos.
+        </p>
+        <div class="loading-bar" aria-hidden="true"><span></span></div>
+      </div>
+    </div>
     <script src="app.js"></script>
   </body>
 </html>

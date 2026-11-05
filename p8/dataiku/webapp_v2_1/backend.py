@@ -212,9 +212,9 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-CITI_CLASSIFICATION_VERSION = "1.0"
+INFORMATION_CLASSIFICATION_VERSION = "1.0"
 
-CITI_CLASSIFICATION_LABELS = {
+INFORMATION_CLASSIFICATION_LABELS = {
     "public": "Público",
     "internal_information": "Interno",
     "internal_pii": "PII Interno",
@@ -224,7 +224,7 @@ CITI_CLASSIFICATION_LABELS = {
     "restricted": "Restringido",
 }
 
-CITI_CLASSIFICATION_GROUPS = {
+INFORMATION_CLASSIFICATION_GROUPS = {
     "public": "public",
     "internal_information": "internal",
     "internal_pii": "internal",
@@ -234,7 +234,7 @@ CITI_CLASSIFICATION_GROUPS = {
     "restricted": "restricted",
 }
 
-ENTITY_TO_CITI_CLASSIFICATION = {
+ENTITY_TO_INFORMATION_CLASSIFICATION = {
     # Internal PII
     "nombre": "internal_pii",
     "apellido": "internal_pii",
@@ -301,8 +301,8 @@ def _classify_information(data: Dict[str, Any]) -> Dict[str, Any]:
     if needs_review or entity == "otro_pii":
         key = "confidential_pii"
         reason = "needs_review"
-    elif entity in ENTITY_TO_CITI_CLASSIFICATION:
-        key = ENTITY_TO_CITI_CLASSIFICATION[entity]
+    elif entity in ENTITY_TO_INFORMATION_CLASSIFICATION:
+        key = ENTITY_TO_INFORMATION_CLASSIFICATION[entity]
         reason = "entity"
     else:
         key = "confidential_pii"
@@ -316,8 +316,8 @@ def _classify_information(data: Dict[str, Any]) -> Dict[str, Any]:
     )
     return {
         "information_classification": key,
-        "information_classification_group": CITI_CLASSIFICATION_GROUPS.get(key),
-        "information_classification_label": CITI_CLASSIFICATION_LABELS.get(key, key),
+        "information_classification_group": INFORMATION_CLASSIFICATION_GROUPS.get(key),
+        "information_classification_label": INFORMATION_CLASSIFICATION_LABELS.get(key, key),
         "classification_review": bool(review),
         "classification_reason": reason,
     }
@@ -340,7 +340,7 @@ def _result_to_row(result: Any, source_file: str) -> Dict[str, Any]:
         "match_rate": data.get("match_rate"),
         "sample_size": data.get("sample_size"),
         "model_version": data.get("model_version"),
-        "classification_version": CITI_CLASSIFICATION_VERSION,
+        "classification_version": INFORMATION_CLASSIFICATION_VERSION,
     }
     row.update(_classify_information(data))
     return row
@@ -448,7 +448,7 @@ def process_table():
     response = {
         "status": "success",
         "columns_analysis": rows,
-        "classification_version": CITI_CLASSIFICATION_VERSION,
+        "classification_version": INFORMATION_CLASSIFICATION_VERSION,
     }
     if warnings:
         response["warnings"] = warnings
@@ -458,14 +458,16 @@ def process_table():
 EXPORT_XLSX_HEADER = ["Archivo", "Nombre de Columna", "Prediccion",
                       "Probabilidad PII (%)", "Evidencia", "Requiere revision",
                       "Entidad", "Probabilidad Entidad (%)", "Muestra",
-                      "Clasificación Citi", "Grupo Citi",
+                      "Clasificación", "Grupo",
                       "Revisión clasificación"]
 _EXPORT_COL_COUNT = len(EXPORT_XLSX_HEADER)
 
 
 def _safe_xlsx_filename(name):
-    base = re.sub(r"[\\/:*?\"<>|]", "_", str(name or "reporte")).strip()[:80] or "reporte"
-    return base if base.lower().endswith(".xlsx") else base + ".xlsx"
+    base = re.sub(r"[\\/:*?\"<>|]", "_", str(name or "reporte")).strip()
+    base = re.sub(r"\.(csv|xls|xlsx)$", "", base, flags=re.IGNORECASE).strip()
+    base = base[:80] or "reporte"
+    return base + ".xlsx"
 
 
 @app.route('/export_xlsx', methods=['POST'])

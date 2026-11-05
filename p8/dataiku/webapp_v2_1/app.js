@@ -443,7 +443,7 @@ function renderTable() {
     );
     const clsLabel = col.information_classification_label || "Sin clasificación";
     const clsBadge = clsKey
-      ? `<span class="status-badge citi-${clsKey}">${escapeHtml(clsLabel)}</span>`
+      ? `<span class="status-badge info-class-${clsKey}">${escapeHtml(clsLabel)}</span>`
       : `<span class="status-badge muted">Sin clasificación</span>`;
     const classificationCell =
       clsBadge +
@@ -528,7 +528,9 @@ function setBusy(b) {
   if (sf) sf.disabled = b;
   const sr = $("#selReportFmt");
   if (sr) sr.disabled = b;
-  $("#loadingSkeleton").hidden = !b;
+  const overlay = $("#loadingOverlay");
+  if (overlay) overlay.hidden = !b;
+  document.body.classList.toggle("is-busy", b);
   if (b) $("#upload-result").textContent = "Analizando columnas…";
 }
 
@@ -691,8 +693,8 @@ const EXPORT_HEADER = [
   "Entidad",
   "Probabilidad Entidad (%)",
   "Muestra",
-  "Clasificación Citi",
-  "Grupo Citi",
+  "Clasificación",
+  "Grupo",
   "Revisión clasificación",
 ];
 
@@ -774,6 +776,7 @@ async function downloadWithFormat(base, fmt, cols) {
 function safeBase(name) {
   return (
     String(name || "archivo")
+      .replace(/\.(csv|xlsx|xls)$/i, "")
       .replace(/[\\/:*?"<>|]/g, "_")
       .slice(0, 80) || "archivo"
   );

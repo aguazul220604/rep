@@ -175,7 +175,7 @@ table,
   white-space: nowrap;
 }
 .page {
-  max-width: 1180px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 0 var(--s6) var(--s16);
 }
@@ -188,7 +188,7 @@ table,
   margin-bottom: var(--s8);
 }
 .band-inner {
-  max-width: 1180px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 0 var(--s6);
 }
@@ -1148,7 +1148,7 @@ table,
 footer.masthead {
   background: transparent;
   color: var(--ink);
-  max-width: 1180px;
+  max-width: 1440px;
 }
 footer.masthead .masthead-sub {
   color: var(--ink-mid);
@@ -1277,37 +1277,37 @@ footer.masthead .masthead-meta {
   border-color: var(--rule-strong);
   color: var(--ink-soft);
 }
-.status-badge.citi-public {
+.status-badge.info-class-public {
   background: color-mix(in srgb, var(--ok) 18%, var(--paper-raised));
   border-color: var(--ok);
   color: var(--ok-deep);
 }
-.status-badge.citi-internal_information {
+.status-badge.info-class-internal_information {
   background: color-mix(in srgb, var(--info) 18%, var(--paper-raised));
   border-color: var(--info);
   color: var(--info-deep);
 }
-.status-badge.citi-internal_pii {
+.status-badge.info-class-internal_pii {
   background: color-mix(in srgb, var(--accent) 18%, var(--paper-raised));
   border-color: var(--accent);
   color: var(--accent);
 }
-.status-badge.citi-confidential_information {
+.status-badge.info-class-confidential_information {
   background: color-mix(in srgb, var(--warn) 18%, var(--paper-raised));
   border-color: var(--warn);
   color: var(--warn-deep);
 }
-.status-badge.citi-confidential_pii {
+.status-badge.info-class-confidential_pii {
   background: var(--signal-wash);
   border-color: var(--signal-deep);
   color: var(--signal-deep);
 }
-.status-badge.citi-sensitive_pii {
+.status-badge.info-class-sensitive_pii {
   background: color-mix(in srgb, var(--c-violeta-oscuro) 22%, var(--paper-raised));
   border-color: var(--c-violeta-oscuro);
   color: var(--c-violeta-claro);
 }
-.status-badge.citi-restricted {
+.status-badge.info-class-restricted {
   background: var(--c-granate-oscuro);
   border-color: var(--c-rojo);
   color: var(--c-crema);
@@ -1339,11 +1339,88 @@ footer.masthead .masthead-meta {
   padding-left: var(--s3);
   margin-top: var(--s3);
 }
-#loadingSkeleton[hidden] {
+body.is-busy {
+  overflow: hidden;
+}
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: var(--s6);
+  background: color-mix(in srgb, var(--paper) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+.loading-overlay[hidden] {
   display: none !important;
 }
-#loadingSkeleton {
-  margin-top: var(--s4);
+.loading-panel {
+  width: min(420px, 100%);
+  padding: var(--s8);
+  text-align: center;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.loading-spinner {
+  display: block;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--s4);
+  border: 3px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-top-color: var(--signal);
+  border-radius: 50%;
+  animation: loading-spin 0.8s linear infinite;
+}
+.loading-title {
+  font-family: var(--font-display);
+  font-weight: 780;
+  font-size: var(--t-heading);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.loading-sub {
+  margin-top: var(--s2);
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.loading-bar {
+  height: 3px;
+  margin-top: var(--s6);
+  overflow: hidden;
+  background: var(--paper-inset);
+}
+.loading-bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--signal);
+  animation: loading-bar 1.2s ease-in-out infinite;
+}
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner,
+  .loading-bar span {
+    animation: none;
+  }
+  .loading-bar span {
+    width: 100%;
+  }
 }
 
 /* KPIs */
@@ -1577,8 +1654,13 @@ footer.masthead .masthead-meta {
 }
 .dl-select:focus {
   border-color: var(--c-blanco);
+  color: var(--c-blanco);
   outline: 2px solid var(--c-rojo);
   outline-offset: 1px;
+}
+.dl-select option {
+  background: var(--c-azul-grisaceo);
+  color: var(--c-azul-oscuro);
 }
 .upload-row {
   display: flex;

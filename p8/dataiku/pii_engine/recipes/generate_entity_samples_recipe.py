@@ -209,14 +209,8 @@ CURP_STATES = (
 
 INE_STATE_CODES = ["%02d" % i for i in range(1, 33)] + ["87", "88"]
 
-_OTRO_PII_VALUES = [
-    "edad 34", "num dependientes 2", "REF-0091234", "firma capturada",
-    "dispositivo movil 88213", "estado de riesgo: medio", "folios sirh 44821",
-    "indicador extranjero: no", "num autos: 1", "seccion sol 1182",
-    "edad 47", "num rollover 99213", "tok req 881277", "cve cliente: pendiente",
-    "edad 29", "num dependientes 0", "REF-0044812", "medioacceso: tarjeta",
-    "num identif 772133", "datos particulares: pendientes",
-]
+_OTRO_PII_AGE_MIN = 18
+_OTRO_PII_AGE_MAX = 99
 
 _CURP_CHARS = "0123456789ABCDEFGHIJKLMNÑOPQRSTUVWXYZ"
 _CURP_DICT = {ch: idx for idx, ch in enumerate(_CURP_CHARS)}
@@ -689,7 +683,7 @@ def g_empresa():
 
 # ----------------------- generadores Grupo E -----------------------
 def g_otro_pii():
-    return random.choice(_OTRO_PII_VALUES)
+    return "edad %d" % random.randint(_OTRO_PII_AGE_MIN, _OTRO_PII_AGE_MAX)
 
 
 GENERATORS = {

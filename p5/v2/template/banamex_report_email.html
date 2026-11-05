@@ -1,0 +1,247 @@
+<!doctype html>
+<!-- =====================================================================
+     BANAMEX — project deletion notification email for Dataiku DSS
+     ---------------------------------------------------------------------
+     The same world as the webapp template — a teller's deposit slip — set
+     as the body of a Dataiku "Send message" step. One file, nothing else.
+     It notifies recipients of the upcoming quarterly deletion of Dataiku
+     projects with low activity and points them to the operations site.
+
+     HOW TO WIRE IT IN DSS (the fields shown right above the message box)
+       1.  Message source   -> Inline           (write your own message)
+       2.  Send as HTML     -> ON               (off = recipients read raw markup)
+       3.  Template type    -> Freemarker       (the dollar-brace expressions and
+                                               hash directives below; written here with &#36; so this comment is
+                                               never itself parsed as a directive)
+       4.  Subject          -> Notificación de Gestión de Eliminación de Proyectos
+       5.  Paste this whole file into the editor — comments included, they
+           never reach the recipient — save, then use Preview to render it.
+
+     §1 CONFIG below is the one thing to touch: point bnxAssetsUrl at the
+     DSS static folder that serves banamex-roseta.png and the two fonts
+     (the same /public/vendor/ the webapp uses; leave it empty and the
+     rose and brand faces are simply not drawn — nothing breaks).
+     This notice uses no DSS run variables: the copy is fixed and the only
+     thing to set is the destination link in §9. bnxAssetsUrl (§1) is
+     optional and only controls the roseta and brand faces.
+     Ref: doc.dataiku.com/dss/latest/scenarios/reporters.html -> Mail.
+
+     EMAIL RULES OF THE WORLD — different from the webapp, on purpose:
+       • Tables and inline styles only. Outlook's Word engine has no flex,
+         grid, custom properties or color-mix — this design never needed
+         them: the slip was always square and ruled, so it survives intact.
+       • Archivo and JetBrains Mono are progressive enhancement: clients
+         that honour @font-face get the brand faces, the rest get honest
+         system stacks (§1). Nothing is downloaded at compose time except
+         the one rose image.
+       • Rojo is still the only signal: the CTA button is the brand red,
+         the one action this notice asks the recipient to take.
+     ===================================================================== -->
+
+<#-- ---------------------------------------------------------------------
+     §1 · CONFIG — CHANGE THE BRAND AND THE ASSET HOST HERE, AND NOWHERE ELSE.
+     The swatches are the palette exactly as printed in webapp/style.css §1;
+     the role hexes are the same derived mixes the webapp computes with
+     color-mix(), pre-mixed because no email client has color-mix.
+     --------------------------------------------------------------------- -->
+
+<#assign bnxAssetsUrl = ""> <#-- SET ME ONCE: the email fetches the roseta
+     (and optionally the fonts) from exactly where the webapp does -- the DSS
+     static root: https://<your-dss-host>/public/vendor (the webapp tries a
+     JS fallback chain, email can't — it can only do that final absolute
+     fetch, so the host must be written here). Copy webapp/banamex-roseta.png
+     into .../dss_data/local/static/public/vendor/ next to banamex.css, then
+     open https://<your-dss-host>/public/vendor/banamex-roseta.png in an
+     INCOGNITO window: if it shows there, mail clients (no DSS session) find
+     it too. Left empty, the rose and brand faces are skipped — nothing
+     breaks, no broken-image box. -->
+
+<#assign cRojo       = '#FF1B44'>  <#-- Rojo        - the brand red, the only signal -->
+<#assign cRojoDeep   = '#BD1C3B'>  <#-- signal-deep  - rojo 74% into azul-oscuro -->
+<#assign cAzul       = '#003746'>  <#-- Azul        - the brand ink -->
+<#assign cAzulOsc    = '#001E22'>  <#-- Azul Oscuro  - the utility strip -->
+<#assign cAzulClaro  = '#005162'>  <#-- Azul Claro   - secondary ink (ink-mid) -->
+<#assign cAzulDig    = '#009CC6'>  <#-- Azul Digital - the info mark -->
+<#assign cInkSoft    = '#426C78'>  <#-- ink-soft    - azul 72% onto paper -->
+<#assign cBlanco     = '#FFFFFF'>  <#-- Blanco      - the form paper -->
+<#assign cPaper      = '#EDF6F7'>  <#-- Azul Grisáceo Claro - page ground -->
+<#assign cPaperIn    = '#DAE9EE'>  <#-- Azul Grisáceo  - the inset well -->
+<#assign cCrema      = '#FDE8E0'>  <#-- Crema        - the stamp wash -->
+<#assign cCremaOsc   = '#F9DBD6'>  <#-- Crema Oscuro  - the error wash -->
+<#assign cRule       = '#AFC4C9'>  <#-- hairline     - azul 26% onto paper -->
+<#assign cRuleStr    = '#6B8D96'>  <#-- strong rule  - azul 55% onto paper -->
+<#assign cRuleLight  = '#D1DFE2'>  <#-- light rule   - azul 12% onto paper -->
+<#assign cVerde      = '#2DDC8E'>  <#-- Verde        - the ok rule -->
+<#assign cOkDeep     = '#007850'>  <#-- ok-deep      - verde-oscuro 55% into azul -->
+<#assign cWarn       = '#FF5F00'>  <#-- Naranja Oscuro - the warn rule -->
+<#assign cWarnDeep   = '#9E501B'>  <#-- warn-deep    - naranja-oscuro 62% in azul -->
+<#assign cBandText   = '#B8C7CB'>  <#-- blanco 72% on azul - quiet text on the band -->
+<#assign cBandRule   = '#739199'>  <#-- blanco 45% on azul - the wordmark hairline -->
+<#assign cTopText    = '#CCD2D3'>  <#-- blanco 80% on azul-oscuro - the strip -->
+
+<#-- Type stacks: brand face first, honest system fallbacks after. Word has
+     no condensed axis, so the display look is carried by weight, case and
+     tracking alone — every static label is set in caps in the source. -->
+<#assign fDisplay = "'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+<#assign fMono    = "'JetBrains Mono', Consolas, 'Courier New', Courier, monospace">
+
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Banamex — Notificación de Gestión de Eliminación de Proyectos</title>
+<#-- §2 · Progressive brand faces. Only sent, only fetched, when bnxAssetsUrl
+     is configured; clients without @font-face fall through to §1 untouched.
+     The mso guard keeps Word from choking on a block it cannot use. -->
+<!--[if !mso]><!-->
+<#if bnxAssetsUrl?has_content>
+<style type="text/css">
+  @font-face { font-family:"Archivo"; font-weight:100 900; font-display:swap;
+    src:url("${bnxAssetsUrl}/archivo-latin.woff2") format("woff2"); }
+  @font-face { font-family:"JetBrains Mono"; font-weight:100 800; font-display:swap;
+    src:url("${bnxAssetsUrl}/jbmono-latin.woff2") format("woff2"); }
+  a[x-apple-data-detectors] { color:inherit !important; text-decoration:none !important; }
+</style>
+</#if>
+<!--<![endif]-->
+</head>
+
+<body style="margin:0; padding:0; background-color:${cPaper};">
+
+<!-- Preheader — the line an inbox shows beside the subject. -->
+<div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">
+  Notificación de Gestión de Eliminación de Proyectos — Banamex · Dataiku DSS automation&#8199;&#8199;&#8199;&#8199;&#8199;&#8199;
+  &#8199;&#8199;&#8199;
+</div>
+
+<!-- Page ground: azul-grisáceo-claro, the paper everything is printed on. -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${cPaper}" style="background-color:${cPaper};">
+<tr><td align="center" style="padding:24px 12px;">
+
+<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
+
+  <!-- — §3 · TOPBAR — azul-oscuro utility strip ——————————————————— -->
+  <tr><td bgcolor="${cAzulOsc}" style="background-color:${cAzulOsc}; padding:8px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td align="left" style="font-family:${fMono}; font-size:10px; letter-spacing:1px; color:${cTopText};">BANAMEX&nbsp;&#183;&nbsp;DATAIKU DSS</td>
+        <td align="right" style="font-family:${fMono}; font-size:10px; letter-spacing:1px; color:${cTopText};">AVISO OPERATIVO</td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- — §4 · MASTHEAD — the azul band: roseta + wordmark ————————— -->
+  <tr><td bgcolor="${cAzul}" style="background-color:${cAzul}; padding:20px 24px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <#if bnxAssetsUrl?has_content>
+        <td width="56" valign="middle" style="padding-right:14px;">
+          <img src="${bnxAssetsUrl}/banamex-roseta.png" width="44" height="44" alt="Banamex"
+               style="display:block; border:0;">
+        </td>
+        </#if>
+        <td valign="middle">
+          <!-- Banamex | BancaNet® - title-case wordmark, cap on the B only.
+               The hairline between them is a real cell border, because Word's
+               engine ignores borders on inline spans. Bottom valign shares
+               the baseline: neither word carries a descender. -->
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td valign="bottom" style="font-family:${fDisplay}; font-weight:800; font-size:26px; line-height:1; letter-spacing:0.5px; color:${cBlanco}; padding-right:12px;">Banamex</td>
+            <td valign="bottom" style="border-left:1px solid ${cBandRule}; padding-left:12px; font-family:${fDisplay}; font-weight:500; font-size:14px; line-height:1; color:${cBandText};">BancaNet<sup>&#174;</sup></td>
+          </tr></table>
+          <div style="font-family:${fMono}; font-size:10px; letter-spacing:1.4px; color:${cBandText}; padding-top:6px;">NOTIFICACIÓN OPERATIVA&#8194;&#183;
+            &#8194;DATAIKU DSS</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- spacer between band and slip -->
+  <tr><td style="height:16px; font-size:16px; line-height:16px;">&nbsp;</td></tr>
+
+  <!-- — §5 · THE SLIP — one printed form: ruled and headed ————————— -->
+  <tr><td bgcolor="${cBlanco}" style="background-color:${cBlanco}; border:1px solid ${cRuleStr}; padding:24px;">
+
+    <!-- slip head: title left, form reference right, double rule under -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td align="left" style="font-family:${fDisplay}; font-weight:800; font-size:16px; letter-spacing:1px; color:${cAzul};">AVISO OPERATIVO</td>
+        <td align="right" style="font-family:${fMono}; font-size:10px; letter-spacing:1.2px; color:${cInkSoft};">FORM BN-MAIL&nbsp;&#183;&nbsp;REV 1</td>
+      </tr>
+      <tr><td colspan="2" style="padding-top:10px; border-top:1px solid ${cRuleStr}; font-size:0; line-height:0;">&nbsp;</td></tr>
+      <tr><td colspan="2" style="height:3px; font-size:3px; line-height:3px;">&nbsp;</td></tr>
+      <tr><td colspan="2" style="border-top:1px solid ${cRuleStr}; font-size:0; line-height:0;">&nbsp;</td></tr>
+    </table>
+    <div style="height:20px; font-size:20px; line-height:20px;">&nbsp;</div>
+
+    <!-- — §6 · NOTICE — the message the dispatch exists to deliver —————————
+         Fixed copy for the quarterly project-deletion notice. No run
+         variables: the only action is the CTA button in §9.
+         ————————————————————————————————————————————————————————————— -->
+    <div style="font-family:${fMono}; font-size:10px; font-weight:700; letter-spacing:1.6px; color:${cAzulClaro};">GESTIÓN DE ELIMINACIÓN DE PROYECTOS</div>
+    <div style="height:10px; font-size:10px; line-height:10px;">&nbsp;</div>
+
+    <div style="font-family:${fDisplay}; font-weight:800; font-size:22px; line-height:1.3; letter-spacing:0.5px; color:${cAzul};">Notificación de Gestión de Eliminación de Proyectos</div>
+    <div style="height:16px; font-size:16px; line-height:16px;">&nbsp;</div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${cRule};">
+      <tr><td style="border-left:3px solid ${cAzulDig}; background-color:${cPaperIn}; padding:12px 16px; font-family:${fDisplay}; font-size:14px; line-height:1.7; color:${cAzul};">
+        Por medio del presente correo se le notifica sobre la próxima ejecución de eliminación de proyectos Dataiku detectados con baja actividad, por lo cual se le solicita acceder al siguiente enlace para poder realizar gestión operativa de los proyectos en cuestión.
+      </td></tr>
+    </table>
+
+    <div style="height:16px; font-size:16px; line-height:16px;">&nbsp;</div>
+
+    <div style="font-family:${fDisplay}; font-size:14px; line-height:1.7; color:${cAzul};">
+      Este proceso de eliminación de proyectos se realiza de forma trimestral, el día 15 a las 9 am. Muchas gracias.
+    </div>
+
+    <!-- — §9 · CTA — the one action, rojo like the stamp pad ————————— -->
+    <div style="height:24px; font-size:24px; line-height:24px;">&nbsp;</div>
+
+    <!-- PEGAR AQUÍ EL ENLACE DEL SITIO: sustituir el href="#" por la URL. -->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" width="100%">
+      <tr><td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <tr><td bgcolor="${cRojoDeep}" style="background-color:${cRojoDeep}; padding:12px 26px;">
+            <a href="#" style="display:inline-block; color:${cBlanco}; font-family:${fMono}; font-size:11px; font-weight:700; letter-spacing:1.6px; text-decoration:none;">REALIZAR GESTIÓN OPERATIVA&nbsp;&nbsp;&#8594;</a>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <!-- slip foot -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td style="padding-top:20px;"></td></tr>
+      <tr>
+        <td style="border-top:1px solid ${cRule}; padding-top:12px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td align="left" style="font-family:${fMono}; font-size:10px; letter-spacing:1px; color:${cInkSoft};">GESTIÓN OPERATIVA DE PROYECTOS</td>
+              <td align="right" style="font-family:${fMono}; font-size:10px; letter-spacing:1px; color:${cInkSoft};">BANAMEX&nbsp;&#183;&nbsp;
+                DATAIKU DSS</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+  </td></tr>
+
+  <!-- — §10 · COLOPHON — the foot of the form ——————————————— -->
+  <tr><td align="center" style="padding:20px 24px 8px; font-family:${fMono}; font-size:10px; letter-spacing:1px; line-height:1.8; color:${cInkSoft};">
+    BANAMEX &#183; NOTIFICACIÓN DE GESTIÓN DE ELIMINACIÓN DE PROYECTOS<br>
+    MENSAJE AUTOMÁTICO &#8212; NO RESPONDER
+  </td></tr>
+
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+
+</td></tr>
+</table>
+</body>
+</html>

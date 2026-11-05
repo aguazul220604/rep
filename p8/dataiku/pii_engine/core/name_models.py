@@ -347,7 +347,12 @@ class NameModelPredictor:
             abstained = ent_abstained[i]
             source = "model"
 
-            if self._is_fast_path(rule_entity) and is_pii[i]:
+            # Regla de nombre inequívoca: prevalece sobre la compuerta binaria.
+            # Sin este rescate, nombres cortos como `cvv` pueden quedar fuera
+            # si el modelo binario les asigna una probabilidad baja.
+            fast_path_rescue = self._is_fast_path(rule_entity)
+
+            if fast_path_rescue:
                 expected_entity = rule_entity
                 top1_entity = rule_entity
                 prob_entity = self.fast_path_entities[rule_entity]
@@ -367,8 +372,10 @@ class NameModelPredictor:
                 is_pii_value = rule_pii or rescued
             else:
                 score_name = float(bin_scores[i])
-                is_pii_value = bool(is_pii[i])
-                if not self.binary_gate_enabled and expected_entity is not None and not is_pii_value:
+                is_pii_value = bool(is_pii[i]) or fast_path_rescue
+                if fast_path_rescue:
+                    score_name = max(score_name, self.fast_path_entities[rule_entity])
+                elif not self.binary_gate_enabled and expected_entity is not None and not is_pii_value:
                     score_name = max(score_name, 0.55)
                     is_pii_value = True
 

@@ -310,11 +310,14 @@ class DataikuAdapter:
 
         try:
             if suffix == ".csv":
+                # `dtype=str` evita que pandas infiera identificadores numéricos
+                # (CLABE, cuenta, NSS, etc.) y destruya sus ceros iniciales.
                 df = pd.read_csv(
                     stream,
                     nrows=self.max_read_rows,
                     usecols=cols,
                     low_memory=False,
+                    dtype=str,
                 )
             else:
                 df = pd.read_parquet(stream, columns=cols)

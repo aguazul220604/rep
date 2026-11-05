@@ -16,6 +16,10 @@
 #
 # allow_content_without_name: true permite evaluar una entidad `required` por contenido
 # cuando la columna es un placeholder (Unnamed: N o vacía); la fusión marca needs_review.
+# Política actual: NO se habilita en ninguna entidad. Solo es válido para entidades
+# `regex` con `context_mode: required` y `validator` fuerte (lo valida RecognizerRegistry).
+# Las 9 entidades `required` carecen de validador fuerte y se mantienen bloqueadas sin
+# nombre para evitar falsos positivos (cuenta, cliente, contrato, nómina, etc.).
 
 version: "1.0"
 

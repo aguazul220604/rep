@@ -46,6 +46,7 @@ class NamePrediction:
     entity_top1: Optional[str] = None
     abstained: bool = False
     source: str = "rules"
+    rule_entity: Optional[str] = None
 
 
 @dataclass

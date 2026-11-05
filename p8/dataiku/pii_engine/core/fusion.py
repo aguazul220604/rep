@@ -133,6 +133,7 @@ class EvidenceFuser:
     ) -> ColumnResult:
         col = sample.column
         n = sample.sample_size
+        rule_otro = name_pred.rule_entity == OTRO_PII
 
         # -------------------------------------------------------------------
         # Caso 0: Clasificación 2 (`otro_pii`) detectada por nombre
@@ -223,7 +224,7 @@ class EvidenceFuser:
                     evidence="name",
                     match_rate=0.0,
                     sample_size=0,
-                    needs_review=False,
+                    needs_review=rule_otro,
                     classification=1,
                     engine_version=engine_version,
                     model_version=model_version,
@@ -258,7 +259,7 @@ class EvidenceFuser:
                 evidence="both",
                 match_rate=expected_content_score.match_rate,
                 sample_size=n,
-                needs_review=False,
+                needs_review=rule_otro,
                 classification=expected_content_score.classification,
                 engine_version=engine_version,
                 model_version=model_version,
@@ -295,7 +296,7 @@ class EvidenceFuser:
                 evidence="content",
                 match_rate=scanned_content_score.match_rate,
                 sample_size=n,
-                needs_review=needs_rev,
+                needs_review=needs_rev or rule_otro,
                 classification=scanned_content_score.classification,
                 engine_version=engine_version,
                 model_version=model_version,
@@ -351,7 +352,7 @@ class EvidenceFuser:
                 evidence="content",
                 match_rate=best_mr,
                 sample_size=n,
-                needs_review=needs_rev,
+                needs_review=needs_rev or rule_otro,
                 classification=1,
                 engine_version=engine_version,
                 model_version=model_version,
@@ -381,7 +382,7 @@ class EvidenceFuser:
                 evidence="content",
                 match_rate=scanned_content_score.match_rate,
                 sample_size=n,
-                needs_review=needs_rev,
+                needs_review=needs_rev or rule_otro,
                 classification=scanned_content_score.classification,
                 engine_version=engine_version,
                 model_version=model_version,
@@ -404,7 +405,7 @@ class EvidenceFuser:
             evidence="both",
             match_rate=best_mr,
             sample_size=n,
-            needs_review=False,
+            needs_review=rule_otro,
             classification=1,
             engine_version=engine_version,
             model_version=model_version,

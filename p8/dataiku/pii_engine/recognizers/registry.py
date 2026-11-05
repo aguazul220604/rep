@@ -96,6 +96,23 @@ class RecognizerRegistry:
             context_words = spec.get("context_words", [])
             neg_words = spec.get("negative_context_words", [])
             context_mode = str(spec.get("context_mode", "optional"))
+            allow_content_without_name = bool(
+                spec.get("allow_content_without_name", False)
+            )
+
+            # Política de precisión: el flag solo es seguro en entidades `required`
+            # con un validador fuerte; de lo contrario ampliaría falsos positivos.
+            if allow_content_without_name:
+                if strategy != "regex" or context_mode != "required":
+                    raise ValueError(
+                        "allow_content_without_name solo aplica a entidades regex "
+                        f"con context_mode=required; entidad {entity_name!r}"
+                    )
+                if not spec.get("validator"):
+                    raise ValueError(
+                        "allow_content_without_name requiere un validator fuerte; "
+                        f"entidad {entity_name!r} no lo define"
+                    )
 
             if strategy == "regex":
                 rec: Recognizer = RegexRecognizer(
@@ -109,9 +126,7 @@ class RecognizerRegistry:
                     negative_context_words=neg_words,
                     context_mode=context_mode,
                     allow_in_free_text=bool(spec.get("allow_in_free_text", True)),
-                    allow_content_without_name=bool(
-                        spec.get("allow_content_without_name", False)
-                    ),
+                    allow_content_without_name=allow_content_without_name,
                 )
             elif strategy == "dictionary":
                 cat_rel = spec.get("catalog")

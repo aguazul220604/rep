@@ -45,6 +45,95 @@ def _build_valid_clabe(base17: str) -> str:
     return f"{base17}{check}"
 
 
+def _build_valid_nss(base10: str) -> str:
+    total = 0
+    for i, ch in enumerate(base10):
+        p = int(ch) * (2 if i % 2 == 1 else 1)
+        if p >= 10:
+            p = (p // 10) + (p % 10)
+        total += p
+    check = (10 - (total % 10)) % 10
+    return f"{base10}{check}"
+
+
+class _CoverageContentModel:
+    """Stub de contenido que separa las 5 clases del bundle para las pruebas de cobertura."""
+
+    classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+    @classmethod
+    def _label(cls, value: str) -> str:
+        s = str(value).strip().upper()
+        if " SA DE CV" in f" {s}" or "S.A." in s:
+            return "empresa"
+        if any(ch.isdigit() for ch in s) or any(ch in "+,;@/_-=:" for ch in s):
+            if "CALLE" in s or "," in s:
+                return "direccion"
+            return "otro"
+        tokens = s.split()
+        if len(tokens) == 1 and s.replace(" ", "").isalpha():
+            return "apellido"
+        if len(tokens) >= 2 and all(token.isalpha() for token in tokens):
+            return "nombre"
+        return "otro"
+
+    def predict_proba(self, X):
+        rows = []
+        for value in X:
+            label = self._label(value)
+            probs = {str(cls): 0.02 for cls in self.classes_}
+            probs[label] = 0.92
+            total = sum(probs.values())
+            rows.append([probs[str(cls)] / total for cls in self.classes_])
+        return np.asarray(rows)
+
+
+def _coverage_fixture():
+    """40 columnas sintéticas, una por entidad, con valores válidos y sin PII real."""
+    return [
+        ("curp", "curp", _build_valid_curp("GODE880515HDFRNS0")),
+        ("rfc", "rfc", "GODE561231GR8"),
+        ("clave_elector", "clave_elector", "GMRDLS85031209H200"),
+        ("clabe", "clabe", _build_valid_clabe("00218001567891234")),
+        ("iban", "iban", "ES9121000418450200051332"),
+        ("tarjeta", "tarjeta", "4532015112830366"),
+        ("correo", "correo", "usuario.prueba@citibanamex.com.mx"),
+        ("ip", "ip", "192.168.1.254"),
+        ("coordenadas", "coordenadas", "19.432608, -99.133209"),
+        ("ssn", "ssn", "123-45-6789"),
+        ("nss", "nss", _build_valid_nss("1290881234")),
+        ("telefono", "telefono", "+52 55 4321 8765"),
+        ("codigo_postal", "codigo_postal", "06600"),
+        ("fecha_nacimiento", "fecha_nacimiento", "1980-01-15"),
+        ("fecha_vencimiento", "fecha_vencimiento", "08/28"),
+        ("pasaporte", "pasaporte", "A12345678"),
+        ("licencia_conducir", "licencia_conducir", "ABC123456"),
+        ("soeid", "soeid", "AB12345"),
+        ("geid", "geid", "1234567890"),
+        ("cic", "cic", "123456789"),
+        ("ocr", "ocr", "123456789012"),
+        ("cuenta", "cuenta", "123456"),
+        ("cliente", "cliente", "CLI12345"),
+        ("contrato", "contrato", "CTO-2024-001"),
+        ("nomina", "nomina", "NOM12345"),
+        ("cvv", "cvv", "123"),
+        ("pin_nip", "pin_nip", "1234"),
+        ("saldo", "saldo", "1500.00"),
+        ("credito", "credito", "CRED1234"),
+        ("huella", "biometrico", "QWxhZGRpbjpvcGVuIHNlc2FtZQ==abcdefgh"),
+        ("lugar_nacimiento", "lugar_nacimiento", "Hidalgo"),
+        ("nacionalidad", "nacionalidad", "mexicana"),
+        ("sexo", "sexo", "masculino"),
+        ("estado_civil", "estado_civil", "casado"),
+        ("puesto", "puesto", "director"),
+        ("nombre", "nombre", "JUAN PEREZ LOPEZ"),
+        ("apellido", "apellido", "GONZALEZ"),
+        ("direccion", "direccion", "CALLE REFORMA 123, CDMX"),
+        ("empresa", "empresa", "BANCO NACIONAL SA DE CV"),
+        ("edad", OTRO_PII, "34"),
+    ]
+
+
 class TestValidators(unittest.TestCase):
     def test_curp_validator(self):
         valid_curp = _build_valid_curp("GODE880515HDFRNS0")
@@ -124,6 +213,31 @@ class TestRegistryAndSampling(unittest.TestCase):
             rec = reg.get(name)
             counts[rec.group] += 1
         self.assertEqual(counts, {"A": 11, "B": 20, "C": 4, "D": 4, "E": 1})
+
+    def test_allow_content_without_name_requires_validator(self):
+        base_entity = {
+            "classification": 1,
+            "group": "B",
+            "strategy": "regex",
+            "patterns": [r"^\d{6,16}$"],
+            "context_mode": "required",
+            "min_match_rate": 0.65,
+            "allow_content_without_name": True,
+        }
+        with self.assertRaises(ValueError):
+            RecognizerRegistry({"version": "1.0", "entities": {"cuenta": base_entity}})
+
+        with self.assertRaises(ValueError):
+            RecognizerRegistry({
+                "version": "1.0",
+                "entities": {
+                    "cuenta": {
+                        **base_entity,
+                        "validator": "curp_checksum",
+                        "context_mode": "recommended",
+                    }
+                },
+            })
 
     def test_sampling_and_free_text(self):
         s_struct = pd.Series(["GODE561231GR8", "GODE561231GR8", None, "XAXX010101000"], name="rfc_cte")
@@ -266,6 +380,195 @@ class TestEndToEndAnalyze(unittest.TestCase):
 
         self.assertTrue(result.pii)
         self.assertEqual(result.entity, "clabe")
+
+    def test_clabe_without_leading_zero_is_not_validated(self):
+        # 17 dígitos: se perdió el cero inicial, no debe enmascararse como CLABE válida.
+        df = pd.DataFrame({"clabe": ["62226541894810392"] * 3})
+        result = analyze(df, table_meta="tabla_clabe_truncada")[0]
+
+        self.assertFalse(result.pii)
+        self.assertEqual(result.entity, NO_ENTITY)
+
+    def test_cvv_name_rule_rescues_low_binary_score(self):
+        class LowBinary:
+            def predict_proba(self, X):
+                return np.asarray([[0.96, 0.04] for _ in X])
+
+        engine = PIIAnalyzer(
+            binary_model_bundle={"model": LowBinary(), "threshold": 0.409}
+        )
+        df = pd.DataFrame({"cvv": ["1674", "087", "5438", "150", "334", "1224"]})
+        result = engine.analyze(df, table_meta="tabla_cvv")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "cvv")
+        self.assertGreaterEqual(result.prob_pii, 0.75)
+
+    def test_codigo_postal_content_only_without_name(self):
+        df = pd.DataFrame({"Unnamed: 5": ["72000", "42300", "72000"]})
+        result = analyze(df, table_meta="tabla_cp")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "codigo_postal")
+        self.assertTrue(result.needs_review)
+
+    def test_geid_content_only_without_name(self):
+        df = pd.DataFrame({"Unnamed: 24": ["1011678043", "1011678043"]})
+        result = analyze(df, table_meta="tabla_geid")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "geid")
+        self.assertTrue(result.needs_review)
+
+    def test_codigo_postal_and_geid_with_random_names(self):
+        df = pd.DataFrame({
+            "f": ["72000", "42300"],
+            "y": ["1011678043", "1011678043"],
+        })
+        results = {r.column: r for r in analyze(df, table_meta="tabla_aleatoria")}
+
+        self.assertTrue(results["f"].pii)
+        self.assertEqual(results["f"].entity, "codigo_postal")
+        self.assertTrue(results["f"].needs_review)
+        self.assertTrue(results["y"].pii)
+        self.assertEqual(results["y"].entity, "geid")
+        self.assertTrue(results["y"].needs_review)
+
+    def test_content_only_cp_geid_flags_named_columns_for_review(self):
+        df = pd.DataFrame({
+            "folio_5": ["72000", "42300"],
+            "folio_10": ["1011678043", "1011678043"],
+        })
+        results = {r.column: r for r in analyze(df, table_meta="tabla_folios")}
+
+        self.assertTrue(results["folio_5"].pii)
+        self.assertEqual(results["folio_5"].entity, "codigo_postal")
+        self.assertTrue(results["folio_5"].needs_review)
+        self.assertTrue(results["folio_10"].pii)
+        self.assertEqual(results["folio_10"].entity, "geid")
+        self.assertTrue(results["folio_10"].needs_review)
+
+    def test_unnamed_placeholder_blocks_required_and_name_only(self):
+        engine = PIIAnalyzer()
+        required_cases = {
+            "fecha_nacimiento": "1980-01-15",
+            "fecha_vencimiento": "08/28",
+            "licencia_conducir": "ABC123456",
+            "cic": "123456789",
+            "ocr": "123456789012",
+            "cuenta": "123456",
+            "cliente": "CLI12345",
+            "contrato": "CTO-2024-001",
+            "nomina": "NOM12345",
+        }
+        name_only_cases = {
+            "cvv": "123",
+            "pin_nip": "1234",
+            "saldo": "1500.00",
+            "credito": "CRED1234",
+            "biometrico": "QWxhZGRpbjpvcGVuIHNlc2FtZQ==abcdefgh",
+        }
+
+        for entity, value in {**required_cases, **name_only_cases}.items():
+            sample = sample_column(
+                pd.Series([value, value], name="Unnamed: 0"), sample_size=10
+            )
+            score = engine.registry.get(entity).score(sample, expected_by_name=False)
+            self.assertFalse(score.passed_threshold, msg=entity)
+
+    def test_unnamed_required_content_does_not_fire_end_to_end(self):
+        df = pd.DataFrame({
+            "Unnamed: 0": ["123456"] * 3,        # cuenta (required)
+            "Unnamed: 1": ["1980-01-15"] * 3,    # fecha_nacimiento (required)
+            "Unnamed: 2": ["ABC123456"] * 3,     # licencia_conducir (required)
+            "Unnamed: 3": ["123"] * 3,           # cvv (name_only)
+        })
+        results = PIIAnalyzer().analyze(df, table_meta="tabla_required_sin_nombre")
+
+        for result in results:
+            self.assertFalse(result.pii, msg=result.column)
+
+    def _analyze_coverage_fixture(self, named: bool):
+        fixture = _coverage_fixture()
+        content_key = "test/coverage/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": _CoverageContentModel(),
+                "classes": list(_CoverageContentModel.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "coverage-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(content_model_path=content_key)
+            data = {}
+            for i, (name, _, value) in enumerate(fixture):
+                column = name if named else f"Unnamed: {i}"
+                data[column] = [value] * 3
+            results = engine.analyze(pd.DataFrame(data), table_meta="cobertura")
+            return {r.column: r for r in results}, fixture
+        finally:
+            ContentModelLoader.clear_cache()
+            ContentModelScorer.clear_cache()
+
+    def test_named_coverage_is_40_of_40_with_rules(self):
+        results, fixture = self._analyze_coverage_fixture(named=True)
+
+        for name, expected_entity, _ in fixture:
+            self.assertTrue(results[name].pii, msg=name)
+            self.assertEqual(results[name].entity, expected_entity, msg=name)
+
+    def test_unnamed_coverage_is_25_of_40(self):
+        excluded = {
+            "fecha_nacimiento",
+            "fecha_vencimiento",
+            "licencia_conducir",
+            "cic",
+            "ocr",
+            "cuenta",
+            "cliente",
+            "contrato",
+            "nomina",
+            "cvv",
+            "pin_nip",
+            "saldo",
+            "credito",
+            "huella",
+            "edad",
+        }
+        results, fixture = self._analyze_coverage_fixture(named=False)
+        detected_entities = set()
+
+        for i, (name, expected_entity, _) in enumerate(fixture):
+            result = results[f"Unnamed: {i}"]
+            if name in excluded:
+                self.assertFalse(result.pii, msg=name)
+            else:
+                self.assertTrue(result.pii, msg=name)
+                self.assertEqual(result.entity, expected_entity, msg=name)
+                detected_entities.add(result.entity)
+
+        self.assertEqual(len(detected_entities), 25)
+        self.assertEqual(sum(1 for r in results.values() if r.pii), 25)
+
+    def test_otro_pii_rule_marks_review_when_binary_gate_skips_name(self):
+        class LowBinary:
+            def predict_proba(self, X):
+                return np.asarray([[0.90, 0.10] for _ in X])
+
+        engine = PIIAnalyzer(
+            binary_model_bundle={"model": LowBinary(), "threshold": 0.50}
+        )
+        df = pd.DataFrame({"edad": [34, 35, 36]})
+        result = engine.analyze(df, table_meta="tabla_edad")[0]
+
+        self.assertFalse(result.pii)
+        self.assertEqual(result.entity, NO_ENTITY)
+        self.assertTrue(result.needs_review)
 
     def test_model_recognizer_interface(self):
         """Verifica que ModelRecognizer funciona cuando se registra un modelo mock en ContentModelLoader."""
@@ -438,6 +741,7 @@ class TestNameResolutionOptimizations(unittest.TestCase):
 
         self.assertFalse(res["saldo_actual"].is_pii_name)
         self.assertIsNone(res["saldo_actual"].expected_entity)
+        self.assertEqual(res["saldo_actual"].rule_entity, "saldo")
 
         self.assertEqual(entity.calls, 1)
         self.assertEqual(entity.seen, ["nombre_cliente"])
@@ -450,9 +754,31 @@ class TestNameResolutionOptimizations(unittest.TestCase):
         self.assertGreaterEqual(res["rfc_cte"].prob_entity_name, 0.85)
 
         # Segunda ejecución: todo debe venir de caché por nombre normalizado.
-        predictor.predict(columns)
+        cached = predictor.predict(columns)
         self.assertEqual(binary.calls, 1)
         self.assertEqual(entity.calls, 1)
+        self.assertEqual(cached["saldo_actual"].rule_entity, "saldo")
+
+    def test_fast_path_rule_rescues_binary_false_negative(self):
+        class LowBinary:
+            def predict_proba(self, X):
+                return np.asarray([[0.96, 0.04] for _ in X])
+
+        predictor = NameModelPredictor(
+            binary_bundle={"model": LowBinary(), "threshold": 0.409},
+            name_resolution_cfg={
+                "binary_gate_enabled": True,
+                "fast_path_enabled": True,
+                "fast_path_min_confidence": 0.85,
+                "fast_path_entities": {"cvv": 0.95},
+            },
+        )
+        res = predictor.predict(["cvv"])["cvv"]
+
+        self.assertTrue(res.is_pii_name)
+        self.assertEqual(res.expected_entity, "cvv")
+        self.assertGreaterEqual(res.score_name, 0.95)
+        self.assertEqual(res.source, "rules")
 
     def test_content_model_single_pass_and_model_version(self):
         class CountingContent:

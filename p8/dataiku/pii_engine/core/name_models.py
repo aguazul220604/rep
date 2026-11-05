@@ -81,6 +81,7 @@ _CACHE_FIELDS = (
     "entity_top1",
     "abstained",
     "source",
+    "rule_entity",
 )
 
 
@@ -335,6 +336,7 @@ class NameModelPredictor:
                     entity_top1=None,
                     abstained=True,
                     source="rules",
+                    rule_entity=None,
                 )
                 results[columns[pending[i]]] = prediction
                 self._cache_put(norms[i], prediction)
@@ -389,6 +391,7 @@ class NameModelPredictor:
                 entity_top1=top1_entity,
                 abstained=abstained,
                 source=source if is_pii_value else ("rules" if self.binary_bundle is None else "model"),
+                rule_entity=rule_entity,
             )
             results[columns[pending[i]]] = prediction
             self._cache_put(norms[i], prediction)

@@ -1,4 +1,4 @@
-const API = { process: "process_table", export: "export_xlsx" };
+const API = { process: "process_table", export: "export_xlsx", health: "health" };
 
 function apiUrl(path) {
   if (typeof getWebAppBackendUrl === "function") {
@@ -45,18 +45,50 @@ const state = {
   onlyEmpty: false,
   activeFile: ALL,
   entity: "",
+  maxUploadMb: null,
+  maxReadRows: null,
 };
+
+async function readJson(res) {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch(apiUrl(API.health));
+    const data = await readJson(res);
+    const max = data.max_upload_mb;
+    state.maxUploadMb = typeof max === "number" && max > 0 ? max : null;
+    const rows = data.max_read_rows;
+    state.maxReadRows = typeof rows === "number" && rows > 0 ? rows : null;
+  } catch {
+    state.maxUploadMb = null;
+    state.maxReadRows = null;
+  }
+}
 
 async function apiProcess(formData) {
   const res = await fetch(apiUrl(API.process), {
     method: "POST",
     body: formData,
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await readJson(res);
   if (!res.ok || data.status !== "success") {
-    throw new Error(
-      data.message || "HTTP " + res.status + " en " + API.process,
-    );
+    const fallback =
+      res.status === 413
+        ? "El archivo es demasiado grande para el servidor o el proxy (HTTP 413)."
+        : "HTTP " +
+          res.status +
+          (res.statusText ? " " + res.statusText : "") +
+          " en " +
+          API.process;
+    throw new Error(data.message || fallback);
   }
   return data;
 }
@@ -528,8 +560,16 @@ async function onSubmit(e) {
     input.focus();
     return;
   }
+  const files = Array.from(input.files);
+  const totalBytes = files.reduce((acc, f) => acc + (f.size || 0), 0);
+  if (state.maxUploadMb && totalBytes > state.maxUploadMb * 1024 * 1024) {
+    showAlert(
+      `El tamaño total (${fmtSize(totalBytes)}) supera el límite de ${state.maxUploadMb} MB.`,
+    );
+    return;
+  }
   const fd = new FormData();
-  Array.from(input.files).forEach((f) => fd.append("file", f));
+  files.forEach((f) => fd.append("file", f));
   setBusy(true);
   try {
     const data = await apiProcess(fd);
@@ -560,6 +600,7 @@ async function onSubmit(e) {
       );
     if (msgs.length) showAlert(msgs.join(" | "), "warn");
   } catch (err) {
+    $("#upload-result").textContent = "";
     showAlert(err.message || "Error desconocido al procesar las tablas.");
   } finally {
     setBusy(false);
@@ -792,6 +833,7 @@ function boot() {
   });
   renderAll();
   updateFileHint();
+  loadConfig();
 }
 
 document.addEventListener("DOMContentLoaded", boot);

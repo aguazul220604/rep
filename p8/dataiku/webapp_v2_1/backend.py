@@ -55,9 +55,42 @@ if "app" not in globals():
 
     app = Flask(__name__)
 
-_MAX_UPLOAD_MB = int(os.getenv("PII_MAX_UPLOAD_MB", "50"))
+_UNLIMITED_UPLOAD_VALUES = {
+    "",
+    "0",
+    "none",
+    "unlimited",
+    "sin_limite",
+    "sin límite",
+}
+
+
+def _parse_max_upload_mb(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in _UNLIMITED_UPLOAD_VALUES:
+        return None
+    try:
+        max_mb = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "PII_MAX_UPLOAD_MB debe ser un entero positivo o "
+            "'none'/'unlimited' para no limitar."
+        ) from exc
+    return max_mb if max_mb > 0 else None
+
+
+try:
+    _MAX_UPLOAD_MB = _parse_max_upload_mb(os.getenv("PII_MAX_UPLOAD_MB", "0"))
+except ValueError as _exc_upload:
+    logging.getLogger(__name__).warning("%s", _exc_upload)
+    _MAX_UPLOAD_MB = None
+
 _MAX_READ_ROWS = int(os.getenv("PII_MAX_READ_ROWS", "50000"))
-app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_MB * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = (
+    None if _MAX_UPLOAD_MB is None else _MAX_UPLOAD_MB * 1024 * 1024
+)
 
 _adapter: Optional[Any] = None
 _adapter_lock = threading.Lock()
@@ -90,6 +123,22 @@ def set_adapter(adapter: Optional[Any]) -> None:
 
 def _error(message: str, status: int = 400):
     return jsonify({"status": "error", "message": message}), status
+
+
+@app.errorhandler(413)
+def _request_entity_too_large(_exc):
+    if _MAX_UPLOAD_MB is None:
+        message = (
+            "El archivo es demasiado grande para el servidor o el reverse proxy. "
+            "Contacta al administrador para aumentar el límite de carga "
+            "(client_max_body_size)."
+        )
+    else:
+        message = (
+            f"El archivo supera el límite de {_MAX_UPLOAD_MB} MB. "
+            "Reduce el tamaño o ajusta PII_MAX_UPLOAD_MB."
+        )
+    return _error(message, 413)
 
 
 def _parse_sample_size(value: Any) -> Optional[int]:
@@ -202,6 +251,9 @@ def health():
             "error": f"{type(exc).__name__}: {exc}",
         }), 503
 
+    info = dict(info)
+    info["max_upload_mb"] = _MAX_UPLOAD_MB
+    info["max_read_rows"] = _MAX_READ_ROWS
     status = 200 if info.get("engine_ready") else 503
     return jsonify(info), status
 

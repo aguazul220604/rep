@@ -110,7 +110,14 @@ def _read_uploaded_file(file, max_rows: int) -> pd.DataFrame:
 
     if suffix == ".csv":
         try:
-            return pd.read_csv(file, nrows=max_rows, low_memory=False)
+            # `dtype=str` evita que pandas infiera identificadores numéricos
+            # (CLABE, cuenta, NSS, etc.) y destruya sus ceros iniciales.
+            return pd.read_csv(
+                file,
+                nrows=max_rows,
+                low_memory=False,
+                dtype=str,
+            )
         except pd.errors.EmptyDataError as exc:
             raise ValueError(f"'{filename}' está vacío.") from exc
 

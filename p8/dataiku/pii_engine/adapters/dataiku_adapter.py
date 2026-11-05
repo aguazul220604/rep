@@ -6,9 +6,10 @@ Resuelve los managed folders de modelos (`model_binary_v1`, `model_entity_v1`,
 `model_content_v1`), cada uno con su `model.pkl`. Construye un `PIIAnalyzer` y
 ofrece operaciones de alto nivel para la webapp:
 
-  - `analyze_dataset(...)`: lee una muestra de un dataset del flow.
+  - `analyze_dataset(...)`: lee una muestra aleatoria (reservoir) de un dataset
+    del flow, sin depender del muestreo nativo de DSS.
   - `analyze_dataframe(...)`: analiza un DataFrame ya cargado.
-  - `analyze_file(...)`: analiza CSV/parquet subido por el usuario.
+  - `analyze_file(...)`: analiza CSV/parquet/Excel subido por el usuario.
   - `health()`: estado del motor y versi��n de modelos.
 
 El adaptador no registra ni devuelve valores de las muestras. El managed
@@ -27,16 +28,24 @@ import threading
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Union
 
-import pandas as pd
-
+from pii_engine.adapters.local_adapter import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_MAX_READ_ROWS,
+    LocalAdapter,
+)
 from pii_engine.core.analyzer import PIIAnalyzer
+from pii_engine.core.row_sampling import (
+    DEFAULT_ROW_SEED,
+    DEFAULT_SAMPLING_MODE,
+    reservoir_sample,
+    sample_dataframe,
+)
 from pii_engine.core.schema import ENGINE_VERSION, ColumnResult
 
 DEFAULT_BINARY_FOLDER = "model_binary_v1"
 DEFAULT_ENTITY_FOLDER = "model_entity_v1"
 DEFAULT_CONTENT_FOLDER = "model_content_v1"
 DEFAULT_MODEL_FILENAME = "model.pkl"
-DEFAULT_MAX_READ_ROWS = 50_000
 
 
 class ModelArtifactError(RuntimeError):
@@ -59,6 +68,8 @@ class DataikuAdapter:
         content_folder: str = DEFAULT_CONTENT_FOLDER,
         model_filename: str = DEFAULT_MODEL_FILENAME,
         max_read_rows: int = DEFAULT_MAX_READ_ROWS,
+        sampling_mode: str = DEFAULT_SAMPLING_MODE,
+        sampling_seed: int = DEFAULT_ROW_SEED,
         cache_dir: Optional[Union[str, Path]] = None,
         analyzer_factory: Optional[Any] = None,
         strict_models: bool = True,
@@ -83,6 +94,13 @@ class DataikuAdapter:
         self._lock = threading.RLock()
         self._analyzer: Optional[Any] = None
         self._resolved: Dict[str, Path] = {}
+        self._local_adapter = LocalAdapter(
+            max_read_rows=self.max_read_rows,
+            sampling_mode=sampling_mode,
+            sampling_seed=sampling_seed,
+            chunk_size=DEFAULT_CHUNK_SIZE,
+            analyzer_getter=self.build_analyzer,
+        )
 
     # ------------------------------------------------------------------
     # Managed folders
@@ -228,6 +246,7 @@ class DataikuAdapter:
         with self._lock:
             self._analyzer = None
             self._resolved.clear()
+            self._local_adapter.reset()
 
     # ------------------------------------------------------------------
     # Operaciones
@@ -242,12 +261,63 @@ class DataikuAdapter:
     ) -> List[ColumnResult]:
         if df is None:
             raise ValueError("El DataFrame de entrada es obligatorio")
-        return self.build_analyzer().analyze(
-            data=df,
-            table_meta=str(table_name),
-            columns=list(columns) if columns is not None else None,
+        return self._local_adapter.analyze_dataframe(
+            df,
+            table_name=table_name,
+            columns=columns,
             sample_size=sample_size,
             seed=seed,
+        )
+
+    def _read_dataset_sample(self, dataset: Any, cols: Optional[List[str]]) -> Any:
+        """Muestrea filas del dataset sin depender del muestreo nativo de DSS."""
+        if self._local_adapter.sampling_mode == "head":
+            try:
+                return dataset.get_dataframe(
+                    columns=cols,
+                    limit=self.max_read_rows,
+                )
+            except TypeError:
+                df = dataset.get_dataframe()
+                if cols:
+                    df = df[[c for c in cols if c in df.columns]]
+                return df.head(self.max_read_rows)
+
+        iterator = getattr(dataset, "iter_dataframes", None)
+        if callable(iterator):
+            try:
+                chunks = iterator(
+                    columns=cols,
+                    chunksize=DEFAULT_CHUNK_SIZE,
+                )
+                return reservoir_sample(
+                    chunks,
+                    self.max_read_rows,
+                    seed=self._local_adapter.sampling_seed,
+                )
+            except TypeError:
+                # Versiones de DSS con otra firma: iterar con defaults.
+                try:
+                    chunks = iterator()
+                    return reservoir_sample(
+                        chunks,
+                        self.max_read_rows,
+                        seed=self._local_adapter.sampling_seed,
+                    )
+                except TypeError:
+                    pass
+
+        try:
+            df = dataset.get_dataframe(columns=cols)
+        except TypeError:
+            df = dataset.get_dataframe()
+            if cols:
+                df = df[[c for c in cols if c in df.columns]]
+        return sample_dataframe(
+            df,
+            self.max_read_rows,
+            mode="random",
+            seed=self._local_adapter.sampling_seed,
         )
 
     def analyze_dataset(
@@ -264,16 +334,7 @@ class DataikuAdapter:
         dataset = dataiku.Dataset(str(dataset_name))
         cols = list(columns) if columns is not None else None
 
-        try:
-            df = dataset.get_dataframe(
-                columns=cols,
-                limit=self.max_read_rows,
-            )
-        except TypeError:
-            df = dataset.get_dataframe()
-            if cols:
-                df = df[[c for c in cols if c in df.columns]]
-            df = df.head(self.max_read_rows)
+        df = self._read_dataset_sample(dataset, cols)
 
         return self.analyze_dataframe(
             df,
@@ -290,48 +351,19 @@ class DataikuAdapter:
         columns: Optional[Iterable[str]] = None,
         sample_size: Optional[int] = None,
         seed: Optional[int] = None,
+        sheet: Optional[Union[str, int]] = None,
     ) -> List[ColumnResult]:
         """
-        Analiza un CSV o parquet. `file_obj` puede ser una ruta o un stream
-        (por ejemplo `request.files["file"].stream`).
+        Analiza un CSV, parquet o Excel. `file_obj` puede ser una ruta o un
+        stream (por ejemplo `request.files["file"].stream`).
         """
-        name = str(filename or "")
-        suffix = Path(name).suffix.lower()
-        if suffix not in {".csv", ".parquet", ".pq"}:
-            raise ValueError("Formato no soportado: use CSV o parquet")
-
-        cols = list(columns) if columns is not None else None
-        close_stream = False
-        if isinstance(file_obj, (str, Path)):
-            stream = open(file_obj, "rb")
-            close_stream = True
-        else:
-            stream = file_obj
-
-        try:
-            if suffix == ".csv":
-                # `dtype=str` evita que pandas infiera identificadores numéricos
-                # (CLABE, cuenta, NSS, etc.) y destruya sus ceros iniciales.
-                df = pd.read_csv(
-                    stream,
-                    nrows=self.max_read_rows,
-                    usecols=cols,
-                    low_memory=False,
-                    dtype=str,
-                )
-            else:
-                df = pd.read_parquet(stream, columns=cols)
-                df = df.head(self.max_read_rows)
-        finally:
-            if close_stream:
-                stream.close()
-
-        return self.analyze_dataframe(
-            df,
-            table_name=Path(name).name or "archivo",
-            columns=cols,
+        return self._local_adapter.analyze_file(
+            file_obj,
+            filename,
+            columns=columns,
             sample_size=sample_size,
             seed=seed,
+            sheet=sheet,
         )
 
     def health(self) -> Dict[str, Any]:
@@ -344,6 +376,11 @@ class DataikuAdapter:
                 "binary": self.binary_folder,
                 "entity": self.entity_folder,
                 "content": self.content_folder,
+            },
+            "sampling": {
+                "mode": self._local_adapter.sampling_mode,
+                "seed": self._local_adapter.sampling_seed,
+                "max_read_rows": self.max_read_rows,
             },
         }
         try:

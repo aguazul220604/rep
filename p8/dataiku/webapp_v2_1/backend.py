@@ -39,9 +39,15 @@ try:
         DataikuAdapter,
         ModelArtifactError,
     )
+    from pii_engine.adapters.local_adapter import (
+        read_csv_sample,
+        read_excel_sample,
+    )
     _ENGINE_IMPORT_ERROR = None
 except Exception as _exc_engine:
     DataikuAdapter = None
+    read_csv_sample = None
+    read_excel_sample = None
 
     class ModelArtifactError(RuntimeError):
         pass
@@ -88,6 +94,21 @@ except ValueError as _exc_upload:
     _MAX_UPLOAD_MB = None
 
 _MAX_READ_ROWS = int(os.getenv("PII_MAX_READ_ROWS", "50000"))
+
+_VALID_SAMPLING_MODES = {"random", "head"}
+_SAMPLING_MODE = (os.getenv("PII_SAMPLING_MODE", "random") or "random").strip().lower()
+if _SAMPLING_MODE not in _VALID_SAMPLING_MODES:
+    logger.warning(
+        "PII_SAMPLING_MODE=%r no válido; se usa 'random'", _SAMPLING_MODE
+    )
+    _SAMPLING_MODE = "random"
+
+try:
+    _SAMPLING_SEED = int(os.getenv("PII_SAMPLE_SEED", "42"))
+except (TypeError, ValueError):
+    logger.warning("PII_SAMPLE_SEED no es un entero; se usa 42")
+    _SAMPLING_SEED = 42
+
 app.config["MAX_CONTENT_LENGTH"] = (
     None if _MAX_UPLOAD_MB is None else _MAX_UPLOAD_MB * 1024 * 1024
 )
@@ -110,6 +131,8 @@ def get_adapter() -> Any:
                 content_folder=os.getenv("PII_CONTENT_FOLDER", "model_content_v1"),
                 model_filename=os.getenv("PII_MODEL_FILENAME", "model.pkl"),
                 max_read_rows=_MAX_READ_ROWS,
+                sampling_mode=_SAMPLING_MODE,
+                sampling_seed=_SAMPLING_SEED,
                 strict_models=True,
             )
         return _adapter
@@ -153,29 +176,39 @@ def _parse_sample_size(value: Any) -> Optional[int]:
     return sample_size
 
 
-def _read_uploaded_file(file, max_rows: int) -> pd.DataFrame:
+def _read_uploaded_file(
+    file,
+    max_rows: int,
+    seed: Optional[int] = None,
+    mode: Optional[str] = None,
+) -> pd.DataFrame:
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
+    seed = _SAMPLING_SEED if seed is None else seed
+    mode = _SAMPLING_MODE if mode is None else mode
 
     if suffix == ".csv":
         try:
             # `dtype=str` evita que pandas infiera identificadores numéricos
             # (CLABE, cuenta, NSS, etc.) y destruya sus ceros iniciales.
-            return pd.read_csv(
+            return read_csv_sample(
                 file,
-                nrows=max_rows,
-                low_memory=False,
+                max_rows,
                 dtype=str,
+                seed=seed,
+                mode=mode,
             )
         except pd.errors.EmptyDataError as exc:
             raise ValueError(f"'{filename}' está vacío.") from exc
 
-    if suffix in {".xls", ".xlsx"}:
+    if suffix in {".xls", ".xlsx", ".xlsm"}:
         try:
-            return pd.read_excel(file, nrows=max_rows)
-        except TypeError:
-            df = pd.read_excel(file)
-            return df.head(max_rows)
+            return read_excel_sample(
+                file,
+                max_rows,
+                seed=seed,
+                mode=mode,
+            )
         except pd.errors.EmptyDataError as exc:
             raise ValueError(f"'{filename}' está vacío.") from exc
 
@@ -368,6 +401,8 @@ def health():
     info = dict(info)
     info["max_upload_mb"] = _MAX_UPLOAD_MB
     info["max_read_rows"] = _MAX_READ_ROWS
+    info["sampling_mode"] = _SAMPLING_MODE
+    info["sampling_seed"] = _SAMPLING_SEED
     status = 200 if info.get("engine_ready") else 503
     return jsonify(info), status
 

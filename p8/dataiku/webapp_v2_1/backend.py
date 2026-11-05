@@ -212,11 +212,122 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+CITI_CLASSIFICATION_VERSION = "1.0"
+
+CITI_CLASSIFICATION_LABELS = {
+    "public": "Público",
+    "internal_information": "Interno",
+    "internal_pii": "PII Interno",
+    "confidential_information": "Confidencial",
+    "confidential_pii": "PII Confidencial",
+    "sensitive_pii": "PII Sensible",
+    "restricted": "Restringido",
+}
+
+CITI_CLASSIFICATION_GROUPS = {
+    "public": "public",
+    "internal_information": "internal",
+    "internal_pii": "internal",
+    "confidential_information": "confidential_sensitive",
+    "confidential_pii": "confidential_sensitive",
+    "sensitive_pii": "confidential_sensitive",
+    "restricted": "restricted",
+}
+
+ENTITY_TO_CITI_CLASSIFICATION = {
+    # Internal PII
+    "nombre": "internal_pii",
+    "apellido": "internal_pii",
+    "direccion": "internal_pii",
+    "telefono": "internal_pii",
+    "correo": "internal_pii",
+    "codigo_postal": "internal_pii",
+    "ip": "internal_pii",
+    "coordenadas": "internal_pii",
+    "soeid": "internal_pii",
+    "geid": "internal_pii",
+    "cliente": "internal_pii",
+    "lugar_nacimiento": "internal_pii",
+    "estado_civil": "internal_pii",
+    "puesto": "internal_pii",
+    "nomina": "internal_pii",
+    # Confidential PII
+    "curp": "confidential_pii",
+    "rfc": "confidential_pii",
+    "clave_elector": "confidential_pii",
+    "ssn": "confidential_pii",
+    "nss": "confidential_pii",
+    "pasaporte": "confidential_pii",
+    "licencia_conducir": "confidential_pii",
+    "cic": "confidential_pii",
+    "ocr": "confidential_pii",
+    "fecha_nacimiento": "confidential_pii",
+    "fecha_vencimiento": "confidential_pii",
+    "tarjeta": "confidential_pii",
+    "cvv": "confidential_pii",
+    "pin_nip": "confidential_pii",
+    "clabe": "confidential_pii",
+    "iban": "confidential_pii",
+    "cuenta": "confidential_pii",
+    "saldo": "confidential_pii",
+    "credito": "confidential_pii",
+    "otro_pii": "confidential_pii",
+    # Sensitive PII
+    "biometrico": "sensitive_pii",
+    "nacionalidad": "sensitive_pii",
+    "sexo": "sensitive_pii",
+    # Business information
+    "contrato": "confidential_information",
+    "empresa": "internal_information",
+}
+
+CLASSIFICATION_REVIEW_ENTITIES = {"empresa", "contrato"}
+
+
+def _classify_information(data: Dict[str, Any]) -> Dict[str, Any]:
+    is_pii = bool(data.get("pii"))
+    if not is_pii:
+        return {
+            "information_classification": None,
+            "information_classification_group": None,
+            "information_classification_label": "Sin clasificación",
+            "classification_review": False,
+            "classification_reason": "not_pii",
+        }
+
+    entity = str(data.get("entity") or "").strip().lower()
+    needs_review = bool(data.get("needs_review"))
+
+    if needs_review or entity == "otro_pii":
+        key = "confidential_pii"
+        reason = "needs_review"
+    elif entity in ENTITY_TO_CITI_CLASSIFICATION:
+        key = ENTITY_TO_CITI_CLASSIFICATION[entity]
+        reason = "entity"
+    else:
+        key = "confidential_pii"
+        reason = "unknown_entity"
+
+    review = (
+        needs_review
+        or entity == "otro_pii"
+        or reason == "unknown_entity"
+        or entity in CLASSIFICATION_REVIEW_ENTITIES
+    )
+    return {
+        "information_classification": key,
+        "information_classification_group": CITI_CLASSIFICATION_GROUPS.get(key),
+        "information_classification_label": CITI_CLASSIFICATION_LABELS.get(key, key),
+        "classification_review": bool(review),
+        "classification_reason": reason,
+    }
+
+
 def _result_to_row(result: Any, source_file: str) -> Dict[str, Any]:
     data = result.to_dict()
     is_pii = bool(data.get("pii"))
 
-    return {
+    row = {
         "source_file": source_file,
         "dataset": source_file,
         "name": data.get("column"),
@@ -229,7 +340,10 @@ def _result_to_row(result: Any, source_file: str) -> Dict[str, Any]:
         "match_rate": data.get("match_rate"),
         "sample_size": data.get("sample_size"),
         "model_version": data.get("model_version"),
+        "classification_version": CITI_CLASSIFICATION_VERSION,
     }
+    row.update(_classify_information(data))
+    return row
 
 
 @app.route("/health", methods=["GET"])
@@ -331,7 +445,11 @@ def process_table():
             400,
         )
 
-    response = {"status": "success", "columns_analysis": rows}
+    response = {
+        "status": "success",
+        "columns_analysis": rows,
+        "classification_version": CITI_CLASSIFICATION_VERSION,
+    }
     if warnings:
         response["warnings"] = warnings
     return jsonify(response)
@@ -339,7 +457,9 @@ def process_table():
 
 EXPORT_XLSX_HEADER = ["Archivo", "Nombre de Columna", "Prediccion",
                       "Probabilidad PII (%)", "Evidencia", "Requiere revision",
-                      "Entidad", "Probabilidad Entidad (%)", "Muestra"]
+                      "Entidad", "Probabilidad Entidad (%)", "Muestra",
+                      "Clasificación Citi", "Grupo Citi",
+                      "Revisión clasificación"]
 _EXPORT_COL_COUNT = len(EXPORT_XLSX_HEADER)
 
 

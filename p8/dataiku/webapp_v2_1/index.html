@@ -1508,6 +1508,14 @@
               <option value="">Todas</option>
             </select>
           </div>
+          <div class="field" style="flex: 1 1 180px; margin-bottom: 0">
+            <label class="field-label" for="in-classification"
+              >Clasificación Citi</label
+            >
+            <select class="select mono" id="in-classification">
+              <option value="">Todas</option>
+            </select>
+          </div>
           <div
             class="field"
             style="flex: 0 1 auto; margin-bottom: 0; align-self: flex-end"
@@ -1545,12 +1553,13 @@
                 <th scope="col">Revisión</th>
                 <th scope="col">Entidad</th>
                 <th scope="col">Prob. entidad</th>
+                <th scope="col">Clasificación Citi</th>
                 <th scope="col">Muestra</th>
               </tr>
             </thead>
             <tbody id="piiListBody">
               <tr>
-                <td colspan="9">Nada inspeccionado todavía</td>
+                <td colspan="10">Nada inspeccionado todavía</td>
               </tr>
             </tbody>
           </table>
@@ -1559,7 +1568,9 @@
           Evidencia: <strong>Nombre</strong> = sin contenido;
           <strong>Contenido</strong> = por valores;
           <strong>Nombre + contenido</strong> = ambos. <strong>Revisar</strong>
-          indica baja confianza o falta de contenido.
+          indica baja confianza o falta de contenido. La
+          <strong>Clasificación Citi</strong> es una recomendación derivada de la
+          entidad detectada y puede requerir validación de Compliance.
         </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
         <div class="dl-box" id="fileExportRow">

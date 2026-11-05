@@ -45,6 +45,7 @@ const state = {
   onlyEmpty: false,
   activeFile: ALL,
   entity: "",
+  classification: "",
   maxUploadMb: null,
   maxReadRows: null,
 };
@@ -125,6 +126,20 @@ function getEntitiesForScope() {
   return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
 }
 
+function getClassificationsForScope() {
+  const scope = tableScopeFile();
+  const m = new Map();
+  for (const c of state.columns) {
+    if (scope && (c.source_file || "") !== scope) continue;
+    const key = c.information_classification;
+    if (!key) continue;
+    m.set(key, c.information_classification_label || key);
+  }
+  return Array.from(m.entries()).sort((a, b) =>
+    String(a[1]).localeCompare(String(b[1]), "es"),
+  );
+}
+
 function topEntities(cols, n = 2) {
   const m = new Map();
   for (const c of cols)
@@ -151,6 +166,11 @@ function visibleColumns() {
     if (state.onlyReview && !c.needs_review) return false;
     if (state.onlyEmpty && Number(c.sample_size || 0) !== 0) return false;
     if (state.entity && (c.entity || "") !== state.entity) return false;
+    if (
+      state.classification &&
+      (c.information_classification || "") !== state.classification
+    )
+      return false;
     if (!q || scoped) return true;
     return String(c.source_file ?? "")
       .toLowerCase()
@@ -179,6 +199,11 @@ function renderKPIs() {
   const pii = state.columns.filter((c) => c.is_pii).length;
   const review = state.columns.filter((c) => c.needs_review).length;
   const empty = state.columns.filter(isEmptyContent).length;
+  const critical = state.columns.filter((c) =>
+    ["confidential_pii", "sensitive_pii", "restricted"].includes(
+      c.information_classification,
+    ),
+  ).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
   const files = getFiles().length;
   const top = topEntities(state.columns, 1)[0];
@@ -186,6 +211,7 @@ function renderKPIs() {
   el.innerHTML =
     `<div class="kpi"><span class="kpi-label">Columnas</span><span class="kpi-value">${total}</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
+    `<div class="kpi"><span class="kpi-label">PII crítico</span><span class="kpi-value">${critical}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Revisión</span><span class="kpi-value">${review}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Sin contenido</span><span class="kpi-value">${empty}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
@@ -318,6 +344,27 @@ function renderEntityOptions() {
   state.entity = sel.value;
 }
 
+function renderClassificationOptions() {
+  const sel = $("#in-classification");
+  if (!sel) return;
+  const cur = state.classification;
+  const scoped = getClassificationsForScope();
+  sel.textContent = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "Todas";
+  sel.append(all);
+  for (const [value, label] of scoped) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    sel.append(o);
+  }
+  const values = scoped.map(([value]) => value);
+  sel.value = cur && values.includes(cur) ? cur : "";
+  state.classification = sel.value;
+}
+
 function renderTable() {
   const wrap = $("#tableWrap");
   const tb = $("#piiListBody");
@@ -365,7 +412,7 @@ function renderTable() {
   if (!rows.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 9;
+    td.colSpan = 10;
     td.textContent = state.columns.length
       ? "Ninguna columna coincide con el filtro"
       : "Nada inspeccionado todavía";
@@ -390,6 +437,19 @@ function renderTable() {
     const sampleCell = isEmptyContent(col)
       ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó solo en el nombre">Sin contenido</span>`
       : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
+    const clsKey = String(col.information_classification || "").replace(
+      /[^a-z_]/gi,
+      "",
+    );
+    const clsLabel = col.information_classification_label || "Sin clasificación";
+    const clsBadge = clsKey
+      ? `<span class="status-badge citi-${clsKey}">${escapeHtml(clsLabel)}</span>`
+      : `<span class="status-badge muted">Sin clasificación</span>`;
+    const classificationCell =
+      clsBadge +
+      (col.classification_review
+        ? ` <span class="status-badge warn" title="Clasificación sujeta a revisión">Revisar</span>`
+        : "");
     tr.innerHTML =
       (showFile
         ? `<td>${escapeHtml(col.source_file || "")}</td>`
@@ -400,6 +460,7 @@ function renderTable() {
       `<td title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
       `<td>${reviewCell}</td>` +
       `<td>${escapeHtml(ent)}</td><td>${escapeHtml(entP)}</td>` +
+      `<td>${classificationCell}</td>` +
       `<td>${sampleCell}</td>`;
     // Oculta la columna Archivo cuando ya se encuentra dentro de un tab de archivo.
     tb.append(tr);
@@ -438,6 +499,7 @@ function renderAll() {
   renderGlobalFilter();
   renderFileFilters();
   renderEntityOptions();
+  renderClassificationOptions();
   renderTable();
   renderReport();
 }
@@ -534,11 +596,13 @@ function clearAll() {
   state.onlyEmpty = false;
   state.activeFile = ALL;
   state.entity = "";
+  state.classification = "";
   $("#in-filter").value = "";
   setChecked("#in-only-pii", false);
   setChecked("#in-only-review", false);
   setChecked("#in-only-empty", false);
   $("#in-entity").value = "";
+  $("#in-classification").value = "";
   const sf = $("#selExportFileFmt");
   if (sf) sf.value = "csv";
   const sr = $("#selReportFmt");
@@ -576,6 +640,7 @@ async function onSubmit(e) {
     state.columns = data.columns_analysis || [];
     state.activeFile = ALL;
     state.entity = "";
+    state.classification = "";
     $("#in-filter").value = "";
     state.filter = "";
     setChecked("#in-only-pii", false);
@@ -626,6 +691,9 @@ const EXPORT_HEADER = [
   "Entidad",
   "Probabilidad Entidad (%)",
   "Muestra",
+  "Clasificación Citi",
+  "Grupo Citi",
+  "Revisión clasificación",
 ];
 
 function buildExportRows(cols) {
@@ -641,6 +709,9 @@ function buildExportRows(cols) {
       ? ""
       : (Number(c.entity_probability) * 100).toFixed(2),
     Number(c.sample_size || 0),
+    c.information_classification_label || "Sin clasificación",
+    c.information_classification_group || "",
+    c.classification_review ? "Si" : "No",
   ]);
 }
 
@@ -740,11 +811,14 @@ function handleGenerateReport() {
 
 function resetFileFilters() {
   state.entity = "";
+  state.classification = "";
   state.onlyPii = false;
   state.onlyReview = false;
   state.onlyEmpty = false;
   const se = $("#in-entity");
   if (se) se.value = "";
+  const sc = $("#in-classification");
+  if (sc) sc.value = "";
   setChecked("#in-only-pii", false);
   setChecked("#in-only-review", false);
   setChecked("#in-only-empty", false);
@@ -813,6 +887,10 @@ function boot() {
   });
   bindChange("#in-entity", (e) => {
     state.entity = e.target.value;
+    renderTable();
+  });
+  bindChange("#in-classification", (e) => {
+    state.classification = e.target.value;
     renderTable();
   });
   const sf = $("#selExportFileFmt");

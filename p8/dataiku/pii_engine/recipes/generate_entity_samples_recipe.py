@@ -64,7 +64,7 @@ ENTITIES = [
     "cic", "ocr", "cuenta", "cliente", "contrato", "nomina", "cvv", "pin_nip",
     "saldo", "credito", "biometrico", "lugar_nacimiento", "nacionalidad",
     "sexo", "estado_civil", "puesto", "nombre", "apellido", "direccion",
-    "empresa", "otro_pii",
+    "empresa", "edad",
 ]
 
 CATALOG_ENTITIES = [
@@ -72,6 +72,9 @@ CATALOG_ENTITIES = [
 ]
 
 CONTENT_ENTITIES = ["nombre", "apellido", "direccion", "empresa"]
+
+# La columna de salida `edad` corresponde a la entidad `otro_pii` del motor.
+ENGINE_ENTITY_ALIASES = {"edad": "otro_pii"}
 
 MAX_DUP_STREAK = 300
 # ========================================================
@@ -209,8 +212,8 @@ CURP_STATES = (
 
 INE_STATE_CODES = ["%02d" % i for i in range(1, 33)] + ["87", "88"]
 
-_OTRO_PII_AGE_MIN = 18
-_OTRO_PII_AGE_MAX = 99
+_EDAD_MIN = 18
+_EDAD_MAX = 99
 
 _CURP_CHARS = "0123456789ABCDEFGHIJKLMNÑOPQRSTUVWXYZ"
 _CURP_DICT = {ch: idx for idx, ch in enumerate(_CURP_CHARS)}
@@ -682,8 +685,8 @@ def g_empresa():
 
 
 # ----------------------- generadores Grupo E -----------------------
-def g_otro_pii():
-    return "edad %d" % random.randint(_OTRO_PII_AGE_MIN, _OTRO_PII_AGE_MAX)
+def g_edad():
+    return "edad %d" % random.randint(_EDAD_MIN, _EDAD_MAX)
 
 
 GENERATORS = {
@@ -726,7 +729,7 @@ GENERATORS = {
     "apellido": g_apellido,
     "direccion": g_direccion,
     "empresa": g_empresa,
-    "otro_pii": g_otro_pii,
+    "edad": g_edad,
 }
 
 
@@ -795,7 +798,7 @@ def _validate_with_engine(df):
         print("Validacion motor: completa (%d valores por columna)" % n_rows)
 
     for column in ENTITIES:
-        spec = entities_cfg[column]
+        spec = entities_cfg[ENGINE_ENTITY_ALIASES.get(column, column)]
         strategy = str(spec.get("strategy", "regex")).lower()
         values = df[column].astype(str).tolist()
         if sample_mode:

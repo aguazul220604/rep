@@ -523,3 +523,342 @@ El code env del backend debe incluir `cloudpickle` y `lightgbm`, además de
 | 11 | `/validate-file` con `pii_df`/`_pii_rules_frame` | Reemplazar por `_pii_source_frame` |
 | 11–12 | `/upload-sas` con `sheet_mismatch`, `record["pii"]` | Conservar |
 | 12 | `/pii/health` | Conservar |
+
+---
+
+## 13. Actualización de muestreo (v3) — mínimo 2,000 filas, tope 50,000
+
+> **Aplica al proyecto DataGate.** Esta sección sustituye el snippet de
+> `_pii_source_frame` de la sección 5 y el muestreo de filas descrito en la
+> sección 4. El objetivo es que DataGate y `webapp_v2_1` analicen la misma
+> cantidad de filas y produzcan resultados equivalentes.
+
+### 13.1 Motivo
+
+El 2% fijo no funciona para tablas pequeñas. Con 40 filas, `ceil(40 * 0.02) = 1`
+fila. El modelo de contenido del Grupo D necesita suficientes valores para
+calcular la cobertura (`tau = 0.50`, `theta = 0.30`); con una sola fila la
+decisión es inestable.
+
+Caso real observado:
+
+- `webapp_v2_1`: `direccion` salió `NO PII` con `Muestra = 1`.
+- DataGate: `direccion` salió `PII` con `match_rate = 86%` porque analizó más filas.
+- `empresa` también cambió de entidad por la misma causa.
+
+Política nueva:
+
+```text
+filas_analizadas = min( max( ceil(total_filas * 0.02), 2000 ), 50000 )
+```
+
+| Total de filas | Filas analizadas |
+|---:|---:|
+| 40 | 40 |
+| 1,000 | 1,000 |
+| 5,000 | 2,000 |
+| 100,000 | 2,000 |
+| 1,000,000 | 20,000 |
+| 10,000,000 | 50,000 |
+
+Además se conserva el tope de **2,000 valores únicos por columna**.
+
+### 13.2 `pii_engine/config/thresholds.yaml`
+
+Reemplazar el bloque `sampling` por:
+
+```yaml
+sampling:
+  row_ratio: 0.02
+  row_min_rows: 2000
+  row_max_rows: 50000
+  default_sample_size: 2000
+  seed: 42
+  free_text_mean_length: 48.0
+  free_text_mean_tokens: 6.5
+```
+
+### 13.3 `pii_engine/adapters/dataiku_adapter.py`
+
+En `LocalSourceReader.__init__`, reemplazar:
+
+```python
+if row_max_rows is None and max_read_rows is not None:
+    row_max_rows = max_read_rows
+self.row_max_rows = None if row_max_rows is None else int(row_max_rows)
+if self.row_ratio is None and self.row_max_rows is None:
+    self.row_max_rows = DEFAULT_MAX_READ_ROWS
+self.max_read_rows = self.row_max_rows
+```
+
+por:
+
+```python
+if max_read_rows is not None:
+    if row_max_rows is None:
+        row_max_rows = max_read_rows
+    else:
+        row_max_rows = min(int(row_max_rows), int(max_read_rows))
+self.row_max_rows = None if row_max_rows is None else int(row_max_rows)
+if self.row_ratio is None and self.row_max_rows is None:
+    self.row_max_rows = DEFAULT_MAX_READ_ROWS
+if (
+    self.row_min_rows is not None
+    and self.row_max_rows is not None
+    and self.row_min_rows > self.row_max_rows
+):
+    self.row_min_rows = self.row_max_rows
+self.max_read_rows = self.row_max_rows
+```
+
+Con esto:
+
+- `max_read_rows` siempre actúa como tope real de lectura.
+- Si `row_min_rows` supera a `row_max_rows`, se ajusta al máximo para evitar
+  el error `min_rows no puede ser mayor que max_rows`.
+
+### 13.4 `data_gate/backend.py`
+
+#### 13.4.1 Eliminar la constante `_PII_MAX_ROWS`
+
+Eliminar:
+
+```python
+_PII_MAX_ROWS = 50000
+```
+
+#### 13.4.2 Añadir helpers de muestreo
+
+Insertar antes de `_pii_ready_dataframe`:
+
+```python
+def _pii_env_int(name, default):
+    """Read an optional integer env var, treating 0/none as 'no limit'."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    text = str(raw).strip().lower()
+    if text in {"", "0", "none", "null", "unlimited", "sin_limite", "sin límite"}:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return default
+
+def _pii_sampling_defaults():
+    """Return (row_ratio, min_rows, max_rows) from the engine config, with the
+    same env overrides supported by webapp_v2_1."""
+    try:
+        from pii_engine.adapters.dataiku_adapter import (
+            DEFAULT_ROW_MAX_ROWS,
+            DEFAULT_ROW_MIN_ROWS,
+            DEFAULT_ROW_RATIO,
+        )
+    except Exception:
+        DEFAULT_ROW_RATIO, DEFAULT_ROW_MIN_ROWS, DEFAULT_ROW_MAX_ROWS = 0.02, 2000, 50000
+
+    ratio = DEFAULT_ROW_RATIO if DEFAULT_ROW_RATIO is not None else 0.02
+    min_rows = DEFAULT_ROW_MIN_ROWS if DEFAULT_ROW_MIN_ROWS is not None else 2000
+    max_rows = DEFAULT_ROW_MAX_ROWS if DEFAULT_ROW_MAX_ROWS is not None else 50000
+
+    env_ratio = os.environ.get("PII_SAMPLE_RATIO")
+    if env_ratio is not None:
+        try:
+            ratio = float(env_ratio)
+        except (TypeError, ValueError):
+            pass
+    min_rows = _pii_env_int("PII_SAMPLE_MIN_ROWS", min_rows)
+    max_rows = _pii_env_int("PII_MAX_READ_ROWS", max_rows)
+    if min_rows is not None and max_rows is not None and min_rows > max_rows:
+        min_rows = max_rows
+    return float(ratio), min_rows, max_rows
+
+def _pii_sample_rows(df):
+    """Apply the engine's row sampling (2% with a 2,000-row floor and 50,000 cap
+    by default) to an already materialized frame."""
+    if df is None:
+        return df
+    ratio, min_rows, max_rows = _pii_sampling_defaults()
+    try:
+        from pii_engine.core.row_sampling import sample_dataframe
+
+        return sample_dataframe(
+            df,
+            max_rows=max_rows,
+            mode="random",
+            seed=42,
+            ratio=ratio,
+            min_rows=min_rows,
+        )
+    except Exception as exc:
+        print(f"[DataGate] PII row sampling failed, using source frame: {exc}")
+        try:
+            if max_rows is not None and len(df) > max_rows:
+                return df.sample(n=max_rows, random_state=42)
+        except Exception:
+            pass
+        return df
+```
+
+#### 13.4.3 `_pii_ready_dataframe` ya no muestrea
+
+La función debe quedar solo como normalización de nombres, decodificación de
+bytes y deduplicación de columnas. Eliminar el muestreo interno y la firma con
+`max_rows`:
+
+```python
+def _pii_ready_dataframe(df):
+    """Normalize the sampled frame for the PII engine: string column names,
+    decoded SAS bytes and unique names. Row sampling is done by
+    `_pii_source_frame` so CSV, Excel and SAS use the same policy."""
+    if df is None or getattr(df, "shape", (0, 0))[1] == 0:
+        return df
+    work = df.copy()
+    # ... nombre de columnas + decodificación de bytes ...
+    return work
+```
+
+#### 13.4.4 Añadir `_pii_source_frame`
+
+Insertar después de `_pii_ready_dataframe`:
+
+```python
+def _pii_source_frame(tmp_path, ext, df, sheet=None):
+    """Build the PII input sample with the same row policy as webapp_v2_1:
+    2% of the table, with a 2,000-row floor and a 50,000-row cap. CSV is
+    re-read as text so codes keep their leading zeros; Excel is re-read from
+    the selected sheet; SAS/XPT reuse the already parsed frame."""
+    ratio, min_rows, max_rows = _pii_sampling_defaults()
+    if ext == '.csv':
+        try:
+            from pii_engine.adapters.dataiku_adapter import read_csv_sample
+
+            return read_csv_sample(
+                tmp_path,
+                max_rows=max_rows,
+                dtype=str,
+                seed=42,
+                mode="random",
+                ratio=ratio,
+                min_rows=min_rows,
+            )
+        except Exception as exc:
+            print(f"[DataGate] PII CSV read failed, using validation frame: {exc}")
+            return _pii_sample_rows(df)
+    if ext in EXCEL_EXTENSIONS:
+        try:
+            from pii_engine.adapters.dataiku_adapter import read_excel_sample
+
+            return read_excel_sample(
+                tmp_path,
+                max_rows=max_rows,
+                sheet=sheet,
+                seed=42,
+                mode="random",
+                ratio=ratio,
+                min_rows=min_rows,
+            )
+        except Exception as exc:
+            print(f"[DataGate] PII Excel read failed, using validation frame: {exc}")
+            return _pii_sample_rows(df)
+    return _pii_sample_rows(df)
+```
+
+#### 13.4.5 `_run_pii_analysis`: evitar doble muestreo
+
+Reemplazar la llamada:
+
+```python
+results = _get_pii_adapter().analyze_dataframe(
+    frame, table_name=str(table_name or "upload"), sample_size=2000
+)
+```
+
+por:
+
+```python
+results = _get_pii_adapter().analyze_dataframe(
+    frame,
+    table_name=str(table_name or "upload"),
+    apply_row_sampling=False,
+)
+```
+
+El `sample_size` de 2,000 valores únicos por columna ahora viene de
+`thresholds.yaml` (`default_sample_size`).
+
+#### 13.4.6 `/validate-file`: analizar la muestra PII
+
+Reemplazar:
+
+```python
+payload["pii"] = _run_pii_analysis(df, file.filename)
+```
+
+por:
+
+```python
+pii_sheet = excel_sheets[0] if excel_sheets else None
+pii_frame = _pii_source_frame(tmp_path, ext, df, pii_sheet)
+payload["pii"] = _run_pii_analysis(pii_frame, file.filename)
+```
+
+### 13.5 Aplicación manual en el servidor Dataiku (proyecto DataGate)
+
+1. **Respaldar** los archivos actuales:
+   - `pii_engine/config/thresholds.yaml`
+   - `pii_engine/adapters/dataiku_adapter.py`
+   - `data_gate/backend.py`
+2. En la **Project Library** del proyecto DataGate:
+   - Actualizar `pii_engine/config/thresholds.yaml` con el bloque de la sección 13.2.
+   - Actualizar `LocalSourceReader.__init__` en `pii_engine/adapters/dataiku_adapter.py` con el bloque de la sección 13.3.
+3. En la **webapp DataGate**:
+   - Eliminar `_PII_MAX_ROWS`.
+   - Añadir `_pii_env_int`, `_pii_sampling_defaults` y `_pii_sample_rows`.
+   - Ajustar `_pii_ready_dataframe` para que no muestree.
+   - Añadir `_pii_source_frame`.
+   - Cambiar `_run_pii_analysis` para usar `apply_row_sampling=False`.
+   - Cambiar `/validate-file` para usar `_pii_source_frame`.
+4. **Reiniciar la webapp / code env** de DataGate. Los defaults de muestreo se
+   leen al importar `pii_engine`, así que un simple refresh del navegador no
+   aplica los cambios.
+5. Aplicar la misma actualización de `thresholds.yaml` y `dataiku_adapter.py`
+   en el proyecto DSS_PII para que ambas webapps usen la misma política.
+
+### 13.6 Verificación
+
+1. `GET /pii/health` en DataGate debe reportar:
+
+```json
+{
+  "sampling": {
+    "row_ratio": 0.02,
+    "row_min_rows": 2000,
+    "row_max_rows": 50000,
+    "max_read_rows": 50000
+  }
+}
+```
+
+2. Subir `data_test_final (3).csv` a DataGate y revisar la respuesta de
+   `/validate-file`:
+   - `direccion` debe tener `sample_size` mayor a 1 (idealmente igual al
+     número de filas del archivo si es menor a 2,000).
+   - `direccion` debe salir `PII` con entidad `direccion`, igual que en
+     `webapp_v2_1`.
+   - `empresa` debe coincidir en entidad y decisión con `webapp_v2_1`.
+3. Casos de muestreo esperados:
+   - 40 filas → 40.
+   - 1,000 filas → 1,000.
+   - 100,000 filas → 2,000.
+   - 1,000,000 filas → 20,000.
+   - 10,000,000 filas → 50,000.
+
+### 13.7 Notas
+
+- Esta actualización **no cambia** el modelo ni los managed folders; solo la
+  cantidad de filas que se analizan y la forma de leer la muestra.
+- El tope de 2,000 valores únicos por columna se mantiene.
+- Si en el futuro negocio pide más cobertura para PII poco frecuente, se debe
+  subir `row_min_rows` (por ejemplo a 3,000 o 5,000), no el porcentaje a 20%,
+  porque lo relevante es el número absoluto de filas revisadas.

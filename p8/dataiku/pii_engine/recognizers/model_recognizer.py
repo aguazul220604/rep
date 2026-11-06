@@ -22,6 +22,7 @@ Si el artefacto aún no está disponible, se abstiene de forma segura sin interr
 """
 from collections import OrderedDict
 from pathlib import Path
+import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -42,12 +43,23 @@ NULL_TOKENS = {
 # para respetar la misma distribución.
 MAX_VALUE_LEN = 120
 
+# Las entidades del Grupo D son textuales (nombre, apellido, dirección, empresa).
+# Los valores de un solo carácter o puramente numéricos no aportan señal y el
+# modelo tiende a clasificarlos erróneamente como nombres/apellidos (p. ej.
+# columnas de códigos como "a", "z", "3", "7").
+MIN_VALUE_LEN = 2
+
 # Probabilidades y coberturas por defecto si el artefacto no trae metadatos.
 DEFAULT_TAU = 0.50
 DEFAULT_THETA = 0.30
 DEFAULT_OTHER_LABEL = "otro"
 
 _MODEL_FILENAMES = ("model.pkl", "model.joblib")
+
+
+def _is_numeric_token(value: str) -> bool:
+    """True para tokens puramente numéricos (enteros o decimales)."""
+    return bool(re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", value))
 
 
 def _clean_values(values: List[str]) -> List[str]:
@@ -57,6 +69,8 @@ def _clean_values(values: List[str]) -> List[str]:
             continue
         s = str(v).strip()
         if not s or s.lower() in NULL_TOKENS:
+            continue
+        if len(s) < MIN_VALUE_LEN or _is_numeric_token(s):
             continue
         if len(s) > MAX_VALUE_LEN:
             s = s[:MAX_VALUE_LEN]

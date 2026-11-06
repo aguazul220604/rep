@@ -1003,6 +1003,82 @@ class TestNameResolutionOptimizations(unittest.TestCase):
         self.assertFalse(result.pii)
         self.assertEqual(result.entity, NO_ENTITY)
 
+    def test_single_char_columns_are_ignored_by_content_model(self):
+        class Content:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.95, "direccion": 0.01, "empresa": 0.01, "nombre": 0.01, "otro": 0.02}
+                    total = sum(p.values())
+                    rows.append([p[c] / total for c in self.classes_])
+                return np.asarray(rows)
+
+        content_key = "test/short_codes/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": Content(),
+                "classes": list(Content.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "short-codes-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(content_model_path=content_key)
+            df = pd.DataFrame({
+                "dato5": ["a", "3", "4", "2", "z", "7", "0"],
+                "dato7": ["a", "3", "4", "2", "z", "7", "0"],
+            })
+            results = {r.column: r for r in engine.analyze(df, table_meta="tabla_codigos")}
+
+            for col in ("dato5", "dato7"):
+                self.assertFalse(results[col].pii)
+                self.assertEqual(results[col].entity, NO_ENTITY)
+        finally:
+            ContentModelLoader.clear_cache()
+
+    def test_content_model_keeps_real_surnames_with_short_noise(self):
+        class Content:
+            classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])
+
+            def predict_proba(self, X):
+                rows = []
+                for _ in X:
+                    p = {"apellido": 0.95, "direccion": 0.01, "empresa": 0.01, "nombre": 0.01, "otro": 0.02}
+                    total = sum(p.values())
+                    rows.append([p[c] / total for c in self.classes_])
+                return np.asarray(rows)
+
+        content_key = "test/surnames_noise/model.pkl"
+        ContentModelLoader.register_in_memory(
+            content_key,
+            {
+                "model": Content(),
+                "classes": list(Content.classes_),
+                "temperature": 1.0,
+                "tau": 0.50,
+                "theta": 0.30,
+                "other_label": "otro",
+                "model_version": "surnames-noise-test",
+            },
+        )
+        try:
+            engine = PIIAnalyzer(content_model_path=content_key)
+            df = pd.DataFrame({
+                "dato_mixto": ["GONZALEZ", "a", "HERNANDEZ", "3", "PEREZ"],
+            })
+            result = engine.analyze(df, table_meta="tabla_mixta")[0]
+
+            self.assertTrue(result.pii)
+            self.assertEqual(result.entity, "apellido")
+        finally:
+            ContentModelLoader.clear_cache()
+
     def test_lugar_nacimiento_content_only_without_name(self):
         class Content:
             classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])

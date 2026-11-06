@@ -232,6 +232,7 @@ class TestLocalAdapter(unittest.TestCase):
         analyzer = _RecordingAnalyzer()
         adapter = LocalAdapter(
             row_ratio=0.02,
+            row_min_rows=None,
             sampling_seed=42,
             analyzer=analyzer,
         )
@@ -242,11 +243,24 @@ class TestLocalAdapter(unittest.TestCase):
         analyzer = _RecordingAnalyzer()
         adapter = LocalAdapter(
             row_ratio=0.02,
+            row_min_rows=None,
             sampling_seed=42,
             analyzer=analyzer,
         )
         adapter.analyze_dataframe(pd.DataFrame({"valor": range(1000)}))
         self.assertEqual(len(analyzer.data), 20)
+
+    def test_analyze_dataframe_applies_minimum_rows(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            row_ratio=0.02,
+            row_min_rows=2000,
+            row_max_rows=50000,
+            sampling_seed=42,
+            analyzer=analyzer,
+        )
+        adapter.analyze_dataframe(pd.DataFrame({"valor": range(1000)}))
+        self.assertEqual(len(analyzer.data), 1000)
 
     def test_analyze_dataframe_can_skip_row_sampling(self):
         analyzer = _RecordingAnalyzer()
@@ -521,6 +535,8 @@ class TestDataikuAdapter(unittest.TestCase):
         adapter = DataikuAdapter(
             cache_dir=self.root / "cache",
             row_ratio=0.02,
+            row_min_rows=None,
+            row_max_rows=None,
             sampling_seed=42,
             analyzer_factory=lambda **kwargs: analyzer,
         )
@@ -535,6 +551,8 @@ class TestDataikuAdapter(unittest.TestCase):
         adapter = DataikuAdapter(
             cache_dir=self.root / "cache",
             row_ratio=0.02,
+            row_min_rows=None,
+            row_max_rows=None,
             sampling_seed=42,
             analyzer_factory=lambda **kwargs: analyzer,
         )

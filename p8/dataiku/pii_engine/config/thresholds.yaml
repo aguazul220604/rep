@@ -3,9 +3,9 @@ version: "1.0"
 
 sampling:
   row_ratio: 0.02
-  row_min_rows:
-  row_max_rows:
-  default_sample_size:
+  row_min_rows: 2000
+  row_max_rows: 50000
+  default_sample_size: 2000
   seed: 42
   free_text_mean_length: 48.0
   free_text_mean_tokens: 6.5

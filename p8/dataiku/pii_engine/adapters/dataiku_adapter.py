@@ -378,11 +378,20 @@ class LocalSourceReader:
         self.chunk_size = max(1, int(chunk_size))
         self.row_ratio = None if row_ratio is None else float(row_ratio)
         self.row_min_rows = None if row_min_rows is None else int(row_min_rows)
-        if row_max_rows is None and max_read_rows is not None:
-            row_max_rows = max_read_rows
+        if max_read_rows is not None:
+            if row_max_rows is None:
+                row_max_rows = max_read_rows
+            else:
+                row_max_rows = min(int(row_max_rows), int(max_read_rows))
         self.row_max_rows = None if row_max_rows is None else int(row_max_rows)
         if self.row_ratio is None and self.row_max_rows is None:
             self.row_max_rows = DEFAULT_MAX_READ_ROWS
+        if (
+            self.row_min_rows is not None
+            and self.row_max_rows is not None
+            and self.row_min_rows > self.row_max_rows
+        ):
+            self.row_min_rows = self.row_max_rows
         self.max_read_rows = self.row_max_rows
 
     def load_dataframe(

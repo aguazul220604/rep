@@ -15,6 +15,7 @@ Flujo por columna (Sección 5.3):
   5. Fusión de evidencia y calibración (`EvidenceFuser`) -> `ColumnResult`.
 """
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional, Union
 
 import yaml
@@ -73,8 +74,16 @@ class PIIAnalyzer:
         name_resolution_cfg = self.thresholds_cfg.get("name_resolution", {})
         fusion_cfg = self.thresholds_cfg.get("fusion", {})
 
-        self.default_sample_size = int(
-            sampling_cfg.get("default_sample_size", DEFAULT_SAMPLE_SIZE)
+        default_sample_size = sampling_cfg.get("default_sample_size", DEFAULT_SAMPLE_SIZE)
+        env_column_sample = os.getenv("PII_COLUMN_SAMPLE_SIZE")
+        if env_column_sample is not None:
+            text = env_column_sample.strip().lower()
+            if text in {"", "0", "none", "null", "sin_limite", "sin límite"}:
+                default_sample_size = None
+            else:
+                default_sample_size = int(text)
+        self.default_sample_size = (
+            None if default_sample_size is None else int(default_sample_size)
         )
         self.default_seed = int(sampling_cfg.get("seed", DEFAULT_SEED))
 

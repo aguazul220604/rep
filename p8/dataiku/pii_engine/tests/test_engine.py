@@ -256,6 +256,12 @@ class TestRegistryAndSampling(unittest.TestCase):
         samp_free = sample_column(s_free, sample_size=10)
         self.assertTrue(samp_free.is_free_text)
 
+    def test_sampling_without_size_returns_all_unique_values(self):
+        values = [f"valor_{i}" for i in range(2500)] + ["valor_0"]
+        s = pd.Series(values, name="alta_cardinalidad")
+        samp = sample_column(s)
+        self.assertEqual(samp.sample_size, 2500)
+
     def test_sampling_float_integer_values_have_no_decimal_suffix(self):
         s = pd.Series([7721630414.0, 42310.0, None], name="mezcla")
         samp = sample_column(s, sample_size=10)

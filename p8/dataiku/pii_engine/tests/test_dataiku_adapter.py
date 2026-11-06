@@ -61,6 +61,12 @@ class _FakeFolder:
         return io.BytesIO(self.blob)
 
 
+def _build_valid_clabe(base17: str) -> str:
+    weights = (3, 7, 1)
+    total = sum((int(base17[i]) * weights[i % 3]) % 10 for i in range(17))
+    return f"{base17}{(10 - (total % 10)) % 10}"
+
+
 class _FakeDataset:
     def __init__(self, df):
         self.df = df
@@ -72,6 +78,34 @@ class _FakeDataset:
         if limit:
             df = df.head(limit)
         return df
+
+
+class _FakeDatasetWithIterator(_FakeDataset):
+    def iter_dataframes(self, columns=None, chunksize=None, **kwargs):
+        df = self.df
+        if columns:
+            df = df[[c for c in columns if c in df.columns]]
+        size = int(chunksize or 100)
+        for start in range(0, len(df), size):
+            yield df.iloc[start:start + size]
+
+
+class _FakeDatasetWithInfo(_FakeDatasetWithIterator):
+    def __init__(self, df, record_count=None):
+        super().__init__(df)
+        self.record_count = len(df) if record_count is None else int(record_count)
+
+    def get_info(self):
+        return {"recordCount": self.record_count}
+
+
+class _RecordingAnalyzer:
+    def __init__(self):
+        self.data = None
+
+    def analyze(self, data=None, **kwargs):
+        self.data = data
+        return []
 
 
 def _write_bundles(root: Path, content_version: str = "adapter-v1"):
@@ -185,10 +219,104 @@ class TestDataikuAdapter(unittest.TestCase):
         self.assertNotIn("values", serialized)
         self.assertNotIn("sample", serialized)
 
+    def _ordered_dataset(self):
+        return _FakeDatasetWithIterator(
+            pd.DataFrame({
+                "valor": ["inicio"] * 900 + ["final"] * 100,
+            })
+        )
+
+    def test_analyze_dataset_random_samples_tail_rows(self):
+        self.datasets["ordenado"] = self._ordered_dataset()
+        analyzer = _RecordingAnalyzer()
+        adapter = DataikuAdapter(
+            cache_dir=self.root / "cache",
+            max_read_rows=200,
+            sampling_mode="random",
+            sampling_seed=42,
+            row_ratio=None,
+            analyzer_factory=lambda **kwargs: analyzer,
+        )
+        adapter.analyze_dataset("ordenado")
+        self.assertIsNotNone(analyzer.data)
+        self.assertEqual(len(analyzer.data), 200)
+        self.assertIn("final", set(analyzer.data["valor"].tolist()))
+
+    def test_analyze_dataset_head_mode_keeps_first_rows(self):
+        self.datasets["ordenado_head"] = self._ordered_dataset()
+        analyzer = _RecordingAnalyzer()
+        adapter = DataikuAdapter(
+            cache_dir=self.root / "cache",
+            max_read_rows=200,
+            sampling_mode="head",
+            analyzer_factory=lambda **kwargs: analyzer,
+        )
+        adapter.analyze_dataset("ordenado_head")
+        self.assertEqual(set(analyzer.data["valor"].tolist()), {"inicio"})
+
+    def test_analyze_dataset_random_fallback_without_iterator(self):
+        self.datasets["sin_iterador"] = _FakeDataset(
+            pd.DataFrame({"valor": ["inicio"] * 900 + ["final"] * 100})
+        )
+        analyzer = _RecordingAnalyzer()
+        adapter = DataikuAdapter(
+            cache_dir=self.root / "cache",
+            max_read_rows=200,
+            sampling_mode="random",
+            sampling_seed=42,
+            row_ratio=None,
+            analyzer_factory=lambda **kwargs: analyzer,
+        )
+        adapter.analyze_dataset("sin_iterador")
+        self.assertEqual(len(analyzer.data), 200)
+        self.assertIn("final", set(analyzer.data["valor"].tolist()))
+
+    def test_analyze_dataset_uses_two_percent_from_metadata(self):
+        self.datasets["ratio_meta"] = _FakeDatasetWithInfo(
+            pd.DataFrame({"valor": range(1000)}),
+            record_count=500,
+        )
+        analyzer = _RecordingAnalyzer()
+        adapter = DataikuAdapter(
+            cache_dir=self.root / "cache",
+            row_ratio=0.02,
+            sampling_seed=42,
+            analyzer_factory=lambda **kwargs: analyzer,
+        )
+        adapter.analyze_dataset("ratio_meta")
+        self.assertEqual(len(analyzer.data), 10)
+
+    def test_analyze_dataset_counts_rows_without_metadata(self):
+        self.datasets["ratio_count"] = _FakeDatasetWithIterator(
+            pd.DataFrame({"valor": range(1000)})
+        )
+        analyzer = _RecordingAnalyzer()
+        adapter = DataikuAdapter(
+            cache_dir=self.root / "cache",
+            row_ratio=0.02,
+            sampling_seed=42,
+            analyzer_factory=lambda **kwargs: analyzer,
+        )
+        adapter.analyze_dataset("ratio_count")
+        self.assertEqual(len(analyzer.data), 20)
+
     def test_analyze_file_csv(self):
         csv = b"nombre_cliente,campo_x\nJUAN PEREZ,ANA TORRES\nMARIA LOPEZ,LUIS RAMOS\n"
         results = self.adapter.analyze_file(io.BytesIO(csv), "muestra.csv")
         self.assertEqual({result.column for result in results}, {"nombre_cliente", "campo_x"})
+
+    def test_analyze_file_preserves_clabe_leading_zeros(self):
+        clabes = [
+            _build_valid_clabe("01218009876543210"),  # banco 012
+            _build_valid_clabe("06222654189481000"),  # banco 062
+            _build_valid_clabe("00218001567891234"),  # banco 002
+        ]
+        csv = ("clabe\n" + "\n".join(clabes) + "\n").encode("utf-8")
+        results = self.adapter.analyze_file(io.BytesIO(csv), "clabes.csv")
+        result = results[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "clabe")
 
     def test_downloads_model_when_folder_has_no_local_path(self):
         blob = (self.content_dir / "model.pkl").read_bytes()

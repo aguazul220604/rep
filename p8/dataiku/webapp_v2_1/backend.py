@@ -43,11 +43,19 @@ try:
         read_csv_sample,
         read_excel_sample,
     )
+    from pii_engine.adapters.sources import (
+        DEFAULT_ROW_MAX_ROWS as _CFG_ROW_MAX_ROWS,
+        DEFAULT_ROW_MIN_ROWS as _CFG_ROW_MIN_ROWS,
+        DEFAULT_ROW_RATIO as _CFG_ROW_RATIO,
+    )
     _ENGINE_IMPORT_ERROR = None
 except Exception as _exc_engine:
     DataikuAdapter = None
     read_csv_sample = None
     read_excel_sample = None
+    _CFG_ROW_RATIO = 0.02
+    _CFG_ROW_MIN_ROWS = None
+    _CFG_ROW_MAX_ROWS = None
 
     class ModelArtifactError(RuntimeError):
         pass
@@ -93,7 +101,65 @@ except ValueError as _exc_upload:
     logging.getLogger(__name__).warning("%s", _exc_upload)
     _MAX_UPLOAD_MB = None
 
-_MAX_READ_ROWS = int(os.getenv("PII_MAX_READ_ROWS", "50000"))
+_MAX_READ_ROWS: Optional[int] = None
+_UNLIMITED_ROW_VALUES = {"", "0", "none", "null", "unlimited", "sin_limite", "sin límite"}
+
+
+def _parse_optional_rows(value: Any, name: str) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in _UNLIMITED_ROW_VALUES:
+        return None
+    try:
+        rows = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} debe ser un entero positivo o vacío") from exc
+    if rows <= 0:
+        raise ValueError(f"{name} debe ser un entero positivo o vacío")
+    return rows
+
+
+def _parse_sample_ratio(value: Any) -> float:
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("PII_SAMPLE_RATIO debe ser un número en (0, 1]") from exc
+    if not 0 < ratio <= 1:
+        raise ValueError("PII_SAMPLE_RATIO debe estar en (0, 1]")
+    return ratio
+
+
+_env_ratio = os.getenv("PII_SAMPLE_RATIO")
+try:
+    _SAMPLE_RATIO = (
+        _parse_sample_ratio(_env_ratio) if _env_ratio is not None else _CFG_ROW_RATIO
+    )
+except ValueError as _exc_ratio:
+    logger.warning("%s; se usa %s", _exc_ratio, _CFG_ROW_RATIO)
+    _SAMPLE_RATIO = _CFG_ROW_RATIO
+
+_env_min_rows = os.getenv("PII_SAMPLE_MIN_ROWS")
+try:
+    _ROW_MIN_ROWS = (
+        _parse_optional_rows(_env_min_rows, "PII_SAMPLE_MIN_ROWS")
+        if _env_min_rows is not None
+        else _CFG_ROW_MIN_ROWS
+    )
+except ValueError as _exc_min:
+    logger.warning("%s; sin mínimo", _exc_min)
+    _ROW_MIN_ROWS = _CFG_ROW_MIN_ROWS
+
+_env_max_rows = os.getenv("PII_MAX_READ_ROWS")
+try:
+    _MAX_READ_ROWS = (
+        _parse_optional_rows(_env_max_rows, "PII_MAX_READ_ROWS")
+        if _env_max_rows is not None
+        else _CFG_ROW_MAX_ROWS
+    )
+except ValueError as _exc_max:
+    logger.warning("%s; sin máximo", _exc_max)
+    _MAX_READ_ROWS = _CFG_ROW_MAX_ROWS
 
 _VALID_SAMPLING_MODES = {"random", "head"}
 _SAMPLING_MODE = (os.getenv("PII_SAMPLING_MODE", "random") or "random").strip().lower()
@@ -133,6 +199,9 @@ def get_adapter() -> Any:
                 max_read_rows=_MAX_READ_ROWS,
                 sampling_mode=_SAMPLING_MODE,
                 sampling_seed=_SAMPLING_SEED,
+                row_ratio=_SAMPLE_RATIO,
+                row_min_rows=_ROW_MIN_ROWS,
+                row_max_rows=_MAX_READ_ROWS,
                 strict_models=True,
             )
         return _adapter
@@ -178,9 +247,11 @@ def _parse_sample_size(value: Any) -> Optional[int]:
 
 def _read_uploaded_file(
     file,
-    max_rows: int,
+    max_rows: Optional[int] = None,
     seed: Optional[int] = None,
     mode: Optional[str] = None,
+    ratio: Optional[float] = None,
+    min_rows: Optional[int] = None,
 ) -> pd.DataFrame:
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
@@ -189,14 +260,14 @@ def _read_uploaded_file(
 
     if suffix == ".csv":
         try:
-            # `dtype=str` evita que pandas infiera identificadores numéricos
-            # (CLABE, cuenta, NSS, etc.) y destruya sus ceros iniciales.
             return read_csv_sample(
                 file,
                 max_rows,
                 dtype=str,
                 seed=seed,
                 mode=mode,
+                ratio=ratio,
+                min_rows=min_rows,
             )
         except pd.errors.EmptyDataError as exc:
             raise ValueError(f"'{filename}' está vacío.") from exc
@@ -208,6 +279,8 @@ def _read_uploaded_file(
                 max_rows,
                 seed=seed,
                 mode=mode,
+                ratio=ratio,
+                min_rows=min_rows,
             )
         except pd.errors.EmptyDataError as exc:
             raise ValueError(f"'{filename}' está vacío.") from exc
@@ -401,6 +474,8 @@ def health():
     info = dict(info)
     info["max_upload_mb"] = _MAX_UPLOAD_MB
     info["max_read_rows"] = _MAX_READ_ROWS
+    info["row_ratio"] = _SAMPLE_RATIO
+    info["row_min_rows"] = _ROW_MIN_ROWS
     info["sampling_mode"] = _SAMPLING_MODE
     info["sampling_seed"] = _SAMPLING_SEED
     status = 200 if info.get("engine_ready") else 503
@@ -441,7 +516,12 @@ def process_table():
             continue
 
         try:
-            df = _read_uploaded_file(file, _MAX_READ_ROWS)
+            df = _read_uploaded_file(
+                file,
+                _MAX_READ_ROWS,
+                ratio=_SAMPLE_RATIO,
+                min_rows=_ROW_MIN_ROWS,
+            )
         except ValueError as exc:
             warnings.append(str(exc))
             continue
@@ -460,6 +540,7 @@ def process_table():
                 df,
                 table_name=file.filename,
                 sample_size=sample_size,
+                apply_row_sampling=False,
             )
         except ModelArtifactError as exc:
             logger.exception("Error de artefacto al analizar '%s'", file.filename)

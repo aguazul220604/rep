@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Muestreo por columna sobre Polars DataFrame / LazyFrame o pandas DataFrame.
 
-Criterios (Sección 6 de la documentación):
+Criterios (SecciÃ³n 6 de la documentaciÃ³n):
   - Extrae valores no nulos y distintos por columna.
-  - Tamaño fijo configurable (por defecto 2,000) con semilla reproducible.
-  - Detecta si la columna corresponde a texto libre (longitud media, proporción
-    de espacios y número medio de tokens) para aplicar `contains` vs `fullmatch`.
+  - TamaÃ±o fijo configurable (por defecto 2,000) con semilla reproducible.
+  - Detecta si la columna corresponde a texto libre (longitud media, proporciÃ³n
+    de espacios y nÃºmero medio de tokens) para aplicar `contains` vs `fullmatch`.
 """
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -21,7 +21,7 @@ except ImportError:
 
 from pii_engine.core.schema import ColumnSample
 
-DEFAULT_SAMPLE_SIZE = 2000
+DEFAULT_SAMPLE_SIZE: Optional[int] = None
 DEFAULT_SEED = 42
 
 _INTEGRAL_FLOAT_SUFFIX = r"^(-?\d+)\.0+$"
@@ -67,7 +67,7 @@ def detect_free_text(
 
 def _sample_polars_series(
     series: "pl.Series",
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
+    sample_size: Optional[int] = DEFAULT_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
     free_text_len_threshold: float = 48.0,
     free_text_tokens_threshold: float = 6.5,
@@ -112,7 +112,7 @@ def _sample_polars_series(
         )
 
     unique_vals = as_str.unique(maintain_order=True)
-    if len(unique_vals) > sample_size:
+    if sample_size is not None and len(unique_vals) > sample_size:
         sampled = unique_vals.sample(n=sample_size, with_replacement=False, seed=seed)
     else:
         sampled = unique_vals
@@ -138,7 +138,7 @@ def _sample_polars_series(
 
 def _sample_pandas_series(
     series: pd.Series,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
+    sample_size: Optional[int] = DEFAULT_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
     free_text_len_threshold: float = 48.0,
     free_text_tokens_threshold: float = 6.5,
@@ -180,7 +180,7 @@ def _sample_pandas_series(
         )
 
     unique_vals = pd.Series(pd.unique(as_str))
-    if len(unique_vals) > sample_size:
+    if sample_size is not None and len(unique_vals) > sample_size:
         sampled = unique_vals.sample(n=sample_size, replace=False, random_state=seed)
     else:
         sampled = unique_vals
@@ -206,13 +206,13 @@ def _sample_pandas_series(
 
 def sample_column(
     series: Any,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
+    sample_size: Optional[int] = DEFAULT_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
     free_text_len_threshold: float = 48.0,
     free_text_tokens_threshold: float = 6.5,
 ) -> ColumnSample:
     """
-    Extrae una muestra de valores únicos no nulos de una columna (Polars o pandas).
+    Extrae una muestra de valores Ãºnicos no nulos de una columna (Polars o pandas).
     """
     if HAS_POLARS and isinstance(series, pl.Series):
         return _sample_polars_series(
@@ -242,11 +242,11 @@ def sample_column(
 def sample_table(
     df: Optional[Any],
     columns: Optional[List[str]] = None,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
+    sample_size: Optional[int] = DEFAULT_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
 ) -> Dict[str, ColumnSample]:
     """
-    Muestrea todas las columnas de una tabla (Polars, pandas o dict) o crea muestras vacías si `df` es None.
+    Muestrea todas las columnas de una tabla (Polars, pandas o dict) o crea muestras vacÃ­as si `df` es None.
     """
     if df is None:
         if not columns:
@@ -289,3 +289,4 @@ def sample_table(
         return samples
 
     raise TypeError(f"Tipo de tabla no soportado: {type(df)!r}")
+

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Pruebas del adaptador de Dataiku con un fake del paquete `dataiku`."""
+"""Pruebas de adaptadores (local, Dataiku) y muestreo de filas."""
 import io
+import os
 import sys
 import tempfile
 import types
@@ -12,9 +13,258 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from pii_engine.adapters.dataiku_adapter import DataikuAdapter, ModelArtifactError
+from pii_engine.adapters.dataiku_adapter import (
+    DataikuAdapter,
+    LocalAdapter,
+    ModelArtifactError,
+    read_csv_sample,
+    read_parquet_sample,
+)
 from pii_engine.core.name_models import NameModelPredictor
+from pii_engine.core.row_sampling import (
+    DEFAULT_ROW_SEED,
+    count_chunks,
+    resolve_row_sample_size,
+    reservoir_sample,
+    sample_dataframe,
+)
 from pii_engine.recognizers.model_recognizer import ContentModelLoader
+
+
+def _csv_with_tail(total=1000, tail=100):
+    values = ["inicio"] * (total - tail) + ["final"] * tail
+    return ("valor\n" + "\n".join(values) + "\n").encode("utf-8")
+
+
+def _chunks(total=50, size=100):
+    return [
+        pd.DataFrame({"v": range(i * size, (i + 1) * size)})
+        for i in range(total)
+    ]
+
+
+class _RecordingAnalyzer:
+    def __init__(self):
+        self.data = None
+
+    def analyze(self, data=None, **kwargs):
+        self.data = data
+        return []
+
+
+class TestSampleDataframe(unittest.TestCase):
+    def test_random_is_deterministic_and_bounded(self):
+        df = pd.DataFrame({"v": range(1000)})
+        first = sample_dataframe(df, 100, mode="random", seed=DEFAULT_ROW_SEED)
+        second = sample_dataframe(df, 100, mode="random", seed=DEFAULT_ROW_SEED)
+        self.assertEqual(len(first), 100)
+        self.assertEqual(first["v"].tolist(), second["v"].tolist())
+
+    def test_head_returns_first_rows(self):
+        df = pd.DataFrame({"v": range(1000)})
+        out = sample_dataframe(df, 10, mode="head")
+        self.assertEqual(out["v"].tolist(), list(range(10)))
+
+    def test_small_table_is_returned_whole(self):
+        df = pd.DataFrame({"v": range(5)})
+        self.assertEqual(len(sample_dataframe(df, 100)), 5)
+
+    def test_invalid_mode_raises(self):
+        df = pd.DataFrame({"v": range(5)})
+        with self.assertRaises(ValueError):
+            sample_dataframe(df, 5, mode="ventana")
+
+    def test_random_does_not_take_head(self):
+        df = pd.DataFrame({"v": range(1000)})
+        out = sample_dataframe(df, 10, mode="random", seed=DEFAULT_ROW_SEED)
+        self.assertNotEqual(out["v"].tolist(), list(range(10)))
+
+
+class TestResolveRowSampleSize(unittest.TestCase):
+    def test_two_percent_uses_ceiling(self):
+        self.assertEqual(resolve_row_sample_size(100_000, 0.02), 2_000)
+        self.assertEqual(resolve_row_sample_size(1_001, 0.02), 21)
+        self.assertEqual(resolve_row_sample_size(1, 0.02), 1)
+
+    def test_zero_rows_returns_zero(self):
+        self.assertEqual(resolve_row_sample_size(0, 0.02), 0)
+
+    def test_optional_min_and_max(self):
+        self.assertEqual(resolve_row_sample_size(100, 0.02, min_rows=10), 10)
+        self.assertEqual(resolve_row_sample_size(100_000, 0.02, max_rows=500), 500)
+
+    def test_min_greater_than_max_raises(self):
+        with self.assertRaises(ValueError):
+            resolve_row_sample_size(100, 0.02, min_rows=10, max_rows=5)
+
+    def test_invalid_ratio_raises(self):
+        with self.assertRaises(ValueError):
+            resolve_row_sample_size(100, 0)
+        with self.assertRaises(ValueError):
+            resolve_row_sample_size(100, 1.5)
+
+
+class TestRatioSampling(unittest.TestCase):
+    def test_sample_dataframe_ratio_is_exact_and_bounded(self):
+        df = pd.DataFrame({"v": range(1_000)})
+        out = sample_dataframe(df, ratio=0.02, seed=DEFAULT_ROW_SEED)
+        self.assertEqual(len(out), 20)
+
+    def test_sample_dataframe_ratio_respects_max(self):
+        df = pd.DataFrame({"v": range(1_000)})
+        out = sample_dataframe(df, max_rows=5, ratio=0.02, seed=DEFAULT_ROW_SEED)
+        self.assertEqual(len(out), 5)
+
+    def test_count_chunks(self):
+        self.assertEqual(count_chunks(_chunks(total=3, size=10)), 30)
+
+
+class TestReservoirSample(unittest.TestCase):
+    def test_returns_all_when_smaller_than_limit(self):
+        out = reservoir_sample(_chunks(total=2, size=5), 100, seed=1)
+        self.assertEqual(len(out), 10)
+
+    def test_is_deterministic(self):
+        first = reservoir_sample(_chunks(), 200, seed=7)
+        second = reservoir_sample(_chunks(), 200, seed=7)
+        self.assertEqual(first["v"].tolist(), second["v"].tolist())
+
+    def test_respects_max_rows(self):
+        out = reservoir_sample(_chunks(), 200, seed=7)
+        self.assertEqual(len(out), 200)
+
+    def test_is_uniform_across_chunks(self):
+        left = pd.DataFrame({"grp": ["L"] * 1000})
+        right = pd.DataFrame({"grp": ["R"] * 1000})
+        out = reservoir_sample([left, right], 200, seed=DEFAULT_ROW_SEED)
+        counts = out["grp"].value_counts()
+        self.assertGreater(counts.get("L", 0), 60)
+        self.assertGreater(counts.get("R", 0), 60)
+
+    def test_includes_tail_rows(self):
+        normal = pd.DataFrame({"v": ["inicio"] * 900})
+        tail = pd.DataFrame({"v": ["final"] * 100})
+        out = reservoir_sample([normal, tail], 200, seed=DEFAULT_ROW_SEED)
+        self.assertIn("final", set(out["v"].tolist()))
+
+    def test_empty_chunks_return_empty_frame(self):
+        out = reservoir_sample([pd.DataFrame(), None], 10, seed=1)
+        self.assertTrue(out.empty)
+
+
+class TestCsvReader(unittest.TestCase):
+    def test_random_includes_tail_rows(self):
+        source = io.BytesIO(_csv_with_tail())
+        df = read_csv_sample(source, 200, seed=42, mode="random")
+        self.assertEqual(len(df), 200)
+        self.assertIn("final", set(df["valor"].tolist()))
+
+    def test_head_keeps_first_rows(self):
+        source = io.BytesIO(_csv_with_tail())
+        df = read_csv_sample(source, 200, seed=42, mode="head")
+        self.assertEqual(set(df["valor"].tolist()), {"inicio"})
+
+    def test_preserves_leading_zeros(self):
+        source = io.BytesIO(b"clabe\n012180098765432100\n")
+        df = read_csv_sample(source, 10, mode="random")
+        self.assertEqual(df.iloc[0]["clabe"], "012180098765432100")
+
+
+class TestParquetReader(unittest.TestCase):
+    def test_random_includes_tail_rows(self):
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("pyarrow no disponible")
+
+        values = ["inicio"] * 900 + ["final"] * 100
+        frame = pd.DataFrame({"valor": values})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "datos.parquet")
+            frame.to_parquet(path, index=False)
+            sampled = read_parquet_sample(path, 200, seed=42, mode="random")
+        self.assertEqual(len(sampled), 200)
+        self.assertIn("final", set(sampled["valor"].tolist()))
+
+    def test_ratio_uses_parquet_metadata(self):
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("pyarrow no disponible")
+
+        frame = pd.DataFrame({"valor": range(1000)})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "datos.parquet")
+            frame.to_parquet(path, index=False)
+            sampled = read_parquet_sample(path, ratio=0.02, seed=42)
+        self.assertEqual(len(sampled), 20)
+
+
+class TestLocalAdapter(unittest.TestCase):
+    def test_analyze_file_uses_sampled_rows(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            max_read_rows=200,
+            sampling_mode="random",
+            sampling_seed=42,
+            row_ratio=None,
+            analyzer=analyzer,
+        )
+        results = adapter.analyze_file(
+            io.BytesIO(_csv_with_tail()), "datos.csv"
+        )
+        self.assertEqual(results, [])
+        self.assertIsNotNone(analyzer.data)
+        self.assertIn("final", set(analyzer.data["valor"].tolist()))
+
+    def test_head_mode_uses_first_rows(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            max_read_rows=200,
+            sampling_mode="head",
+            row_ratio=None,
+            analyzer=analyzer,
+        )
+        adapter.analyze_file(io.BytesIO(_csv_with_tail()), "datos.csv")
+        self.assertEqual(set(analyzer.data["valor"].tolist()), {"inicio"})
+
+    def test_analyze_file_applies_dynamic_ratio(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            row_ratio=0.02,
+            sampling_seed=42,
+            analyzer=analyzer,
+        )
+        adapter.analyze_file(io.BytesIO(_csv_with_tail()), "datos.csv")
+        self.assertEqual(len(analyzer.data), 20)
+
+    def test_analyze_dataframe_applies_dynamic_ratio(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            row_ratio=0.02,
+            sampling_seed=42,
+            analyzer=analyzer,
+        )
+        adapter.analyze_dataframe(pd.DataFrame({"valor": range(1000)}))
+        self.assertEqual(len(analyzer.data), 20)
+
+    def test_analyze_dataframe_can_skip_row_sampling(self):
+        analyzer = _RecordingAnalyzer()
+        adapter = LocalAdapter(
+            row_ratio=0.02,
+            sampling_seed=42,
+            analyzer=analyzer,
+        )
+        adapter.analyze_dataframe(
+            pd.DataFrame({"valor": range(1000)}),
+            apply_row_sampling=False,
+        )
+        self.assertEqual(len(analyzer.data), 1000)
+
+    def test_unsupported_format_raises(self):
+        adapter = LocalAdapter(analyzer=_RecordingAnalyzer())
+        with self.assertRaises(ValueError):
+            adapter.analyze_file(io.BytesIO(b"x"), "datos.txt")
 
 
 class _BinaryModel:
@@ -97,15 +347,6 @@ class _FakeDatasetWithInfo(_FakeDatasetWithIterator):
 
     def get_info(self):
         return {"recordCount": self.record_count}
-
-
-class _RecordingAnalyzer:
-    def __init__(self):
-        self.data = None
-
-    def analyze(self, data=None, **kwargs):
-        self.data = data
-        return []
 
 
 def _write_bundles(root: Path, content_version: str = "adapter-v1"):

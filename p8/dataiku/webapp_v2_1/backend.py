@@ -36,17 +36,13 @@ for _candidate in _PATH_CANDIDATES:
 
 try:
     from pii_engine.adapters.dataiku_adapter import (
-        DataikuAdapter,
-        ModelArtifactError,
-    )
-    from pii_engine.adapters.local_adapter import (
-        read_csv_sample,
-        read_excel_sample,
-    )
-    from pii_engine.adapters.sources import (
         DEFAULT_ROW_MAX_ROWS as _CFG_ROW_MAX_ROWS,
         DEFAULT_ROW_MIN_ROWS as _CFG_ROW_MIN_ROWS,
         DEFAULT_ROW_RATIO as _CFG_ROW_RATIO,
+        DataikuAdapter,
+        ModelArtifactError,
+        read_csv_sample,
+        read_excel_sample,
     )
     _ENGINE_IMPORT_ERROR = None
 except Exception as _exc_engine:

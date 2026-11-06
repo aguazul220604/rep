@@ -4,7 +4,7 @@ Python recipe (Dataiku): genera dataset sintetico de las 40 entidades PII.
 
 Entrada : ninguna.
 Salida  : dataset `entity_samples_50` con una columna por entidad (40 columnas,
-          en el orden de `entities.yaml`) y N_ROWS filas de datos sinteticos
+          mapeadas a las entidades de `entities.yaml`) y N_ROWS filas de datos sinteticos
           (N_ROWS se define en el CONFIG de esta receta; valido de 1 a
           1,000,000). Todos los valores son validos por construccion (digitos
           verificadores CURP/RFC/CLABE/NSS/Luhn/IBAN, estructuras INE/SAT/
@@ -62,7 +62,7 @@ ENTITIES = [
     "coordenadas", "ssn", "nss", "telefono", "codigo_postal", "fecha_nacimiento",
     "fecha_vencimiento", "pasaporte", "licencia_conducir", "soeid", "geid",
     "cic", "ocr", "cuenta", "cliente", "contrato", "nomina", "cvv", "pin_nip",
-    "saldo", "credito", "biometrico", "lugar_nacimiento", "nacionalidad",
+    "saldo", "credito", "huella", "lugar_nacimiento", "nacionalidad",
     "sexo", "estado_civil", "puesto", "nombre", "apellido", "direccion",
     "empresa", "edad",
 ]
@@ -73,8 +73,9 @@ CATALOG_ENTITIES = [
 
 CONTENT_ENTITIES = ["nombre", "apellido", "direccion", "empresa"]
 
-# La columna de salida `edad` corresponde a la entidad `otro_pii` del motor.
-ENGINE_ENTITY_ALIASES = {"edad": "otro_pii"}
+# Columnas de salida que corresponden a otra entidad del motor:
+# `edad` -> `otro_pii` y `huella` -> `biometrico`.
+ENGINE_ENTITY_ALIASES = {"edad": "otro_pii", "huella": "biometrico"}
 
 MAX_DUP_STREAK = 300
 # ========================================================
@@ -590,7 +591,7 @@ def g_credito():
     )
 
 
-def g_biometrico():
+def g_huella():
     raw = bytes(random.getrandbits(8) for _ in range(32))
     return base64.b64encode(raw).decode("ascii")
 
@@ -719,7 +720,7 @@ GENERATORS = {
     "pin_nip": g_pin_nip,
     "saldo": g_saldo,
     "credito": g_credito,
-    "biometrico": g_biometrico,
+    "huella": g_huella,
     "lugar_nacimiento": g_lugar_nacimiento,
     "nacionalidad": g_nacionalidad,
     "sexo": g_sexo,

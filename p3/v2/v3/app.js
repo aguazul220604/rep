@@ -16,6 +16,20 @@ function apiUrl(path) {
   return path;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isAbortError(error) {
+  return Boolean(error && (error.name === "AbortError" || error.code === 20));
+}
+
 /* =====================================================================
    HELPERS
    ===================================================================== */
@@ -41,9 +55,10 @@ function escAttr(value) {
   return escHtml(value).replace(/'/g, "&#39;");
 }
 
-function showError(message) {
+function showError(message, allowRetry = false) {
   const box = $("#app-alert");
   const txt = $("#app-alert-text");
+  const retry = $("#app-alert-retry");
   if (!box || !txt) {
     alert(message);
     return;
@@ -52,11 +67,13 @@ function showError(message) {
   box.classList.remove("alert-warn");
   box.classList.add("alert-error");
   box.hidden = false;
+  if (retry) retry.hidden = !allowRetry;
 }
 
 function showWarning(message) {
   const box = $("#app-alert");
   const txt = $("#app-alert-text");
+  const retry = $("#app-alert-retry");
   if (!box || !txt) {
     console.warn(message);
     return;
@@ -65,11 +82,14 @@ function showWarning(message) {
   box.classList.remove("alert-error");
   box.classList.add("alert-warn");
   box.hidden = false;
+  if (retry) retry.hidden = true;
 }
 
 function hideError() {
   const box = $("#app-alert");
+  const retry = $("#app-alert-retry");
   if (box) box.hidden = true;
+  if (retry) retry.hidden = true;
 }
 
 function tickClock() {
@@ -145,7 +165,7 @@ window.AppState = {
     this.renderCurrentView();
     try {
       const url = apiUrl(API.scan + this.getCutoffQuery());
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url, {}, 90000);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (data.status === "success") {
@@ -172,9 +192,17 @@ window.AppState = {
       }
     } catch (error) {
       console.error("Error al obtener /scan-bundles:", error);
-      showError(
-        "No se pudo cargar el versionamiento (S3). Se debe revisar la conexión",
-      );
+      if (isAbortError(error)) {
+        showError(
+          "El escaneo de S3 tardó más de 90 segundos. Vuelve a intentarlo.",
+          true,
+        );
+      } else {
+        showError(
+          "No se pudo cargar el versionamiento (S3). Se debe revisar la conexión",
+          true,
+        );
+      }
     } finally {
       this.isLoading = false;
       this.renderMetrics();
@@ -188,7 +216,7 @@ window.AppState = {
     this.renderCurrentView();
     try {
       const url = apiUrl(API.historical);
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url, {}, 60000);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (data.status === "success") {
@@ -198,9 +226,17 @@ window.AppState = {
       }
     } catch (error) {
       console.error("Error al obtener /get-historical:", error);
-      showError(
-        "No se pudo cargar el histórico. Revise la conexión e intente de nuevo.",
-      );
+      if (isAbortError(error)) {
+        showError(
+          "El histórico tardó más de 60 segundos en responder. Vuelve a intentarlo.",
+          true,
+        );
+      } else {
+        showError(
+          "No se pudo cargar el histórico. Revise la conexión e intente de nuevo.",
+          true,
+        );
+      }
     } finally {
       this.isLoading = false;
       this.renderMetrics();
@@ -543,11 +579,15 @@ window.triggerAuthorize = async function () {
     }
     setBusy(true);
     const url = apiUrl(API.authorize);
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bundles: payload }),
-    });
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bundles: payload }),
+      },
+      180000,
+    );
     if (!response.ok) {
       let msg = `HTTP ${response.status}`;
       try {
@@ -587,7 +627,7 @@ window.triggerGlobalReport = async function () {
       ? window.AppState.getCutoffQuery()
       : "";
     const url = apiUrl(API.globalReport + suffix);
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url, {}, 180000);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
@@ -653,6 +693,14 @@ document.addEventListener("DOMContentLoaded", () => {
     flowDropdown.value = window.AppState.currentFlow;
     flowDropdown.addEventListener("change", (e) => {
       window.AppState.setFlow(e.target.value);
+    });
+  }
+
+  const retryBtn = document.getElementById("app-alert-retry");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", () => {
+      hideError();
+      window.AppState.fetchScanBundles();
     });
   }
   $$(".viewnav-tab").forEach((t) =>

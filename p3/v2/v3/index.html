@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Banamex</title>
-    <link rel="icon" href="/public/vendor/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -1471,6 +1470,15 @@
       <div class="alert alert-error" id="app-alert" hidden>
         <span class="alert-mark" aria-hidden="true">!</span>
         <span id="app-alert-text">—</span>
+        <button
+          class="btn btn-secondary"
+          id="app-alert-retry"
+          type="button"
+          style="margin-left: auto"
+          hidden
+        >
+          Reintentar
+        </button>
       </div>
 
       <div id="main-content-container" aria-live="polite"></div>

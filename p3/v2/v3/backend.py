@@ -3,6 +3,8 @@ import hashlib
 import io
 import os
 import re
+import time
+from collections import deque
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file
 import dataiku
@@ -34,9 +36,37 @@ NEW_FLOW_EXTENSIONS = (".zip", ".gz", ".tar.gz", ".tgz")
 PROJECT_BUNDLES_SEGMENT = "project_bundles"
 FALLBACK_NEW_FLOW_ENVS = ("UAT", "PROD-1", "PROD", "LAB", "DEV", "QA", "DESIGN")
 
+# Límites del escaneo on-request (solo API de Dataiku). El listado de S3 puede
+# traer miles de rutas internas de cada bundle (.git/objects, etc.); para no
+# colgar el request se acotan las llamadas de detalle y el tiempo total.
+SIZE_SAMPLE_PER_BUNDLE = int(os.environ.get("BUNDLE_SIZE_SAMPLE", "5"))
+SCAN_MAX_DETAIL_CALLS = int(os.environ.get("SCAN_MAX_DETAIL_CALLS", "300"))
+SCAN_TIME_BUDGET_S = float(os.environ.get("SCAN_TIME_BUDGET_S", "60"))
+
 BUNDLE_DATE_REGEX = re.compile(
     r"(\d{4})-(\d{2})-(\d{2})(?:[-_](\d{2})-(\d{2})-(\d{2}))?"
 )
+
+
+class ScanBudget:
+    """Presupuesto compartido por request para llamadas caras a S3."""
+
+    def __init__(self, max_calls=None, time_budget_s=None):
+        self.max_calls = SCAN_MAX_DETAIL_CALLS if max_calls is None else max_calls
+        self.time_budget_s = (
+            SCAN_TIME_BUDGET_S if time_budget_s is None else time_budget_s
+        )
+        self.calls = 0
+        self.deadline = time.monotonic() + max(0.0, self.time_budget_s)
+
+    def can_call(self):
+        return self.calls < self.max_calls and time.monotonic() < self.deadline
+
+    def consume(self):
+        self.calls += 1
+
+    def out_of_time(self):
+        return time.monotonic() >= self.deadline
 
 
 def get_six_months_ago(cutoff_days=DEFAULT_CUTOFF_DAYS):
@@ -149,6 +179,7 @@ def parse_s3_path(path):
             "bundle_name": bundle_name,
             "bundle_path": bundle_path,
             "is_folder_bundle": is_folder_bundle,
+            "in_project_bundles": True,
         }
 
     # 2. NEW (LAB): [dataiku/]{AMBIENTE}/{NICKNAME}/{PROYECTO}/{ARCHIVO}
@@ -166,6 +197,7 @@ def parse_s3_path(path):
             "bundle_name": normalized[-1],
             "bundle_path": "/" + clean_path,
             "is_folder_bundle": False,
+            "in_project_bundles": False,
         }
 
     # Contenedores de project_bundles no son bundles
@@ -187,55 +219,81 @@ def parse_s3_path(path):
             "bundle_name": normalized[-1],
             "bundle_path": "/" + clean_path,
             "is_folder_bundle": raw_path.rstrip("/") != raw_path,
+            "in_project_bundles": False,
         }
 
     return None
 
 
-def get_folder_bundle_details(folder, bundle_path, child_paths, bundle_name):
+def get_folder_bundle_details(folder, bundle_path, info, bundle_name, budget=None):
     """
-    Obtiene (creation_date, size_bytes) para un bundle basado en carpeta.
-    Prioriza la fecha embebida en el nombre del bundle o el lastModified en S3,
-    evitando consultar individualmente miles de archivos internos (.git/objects).
+    Obtiene (creation_date, tamaño_bytes_aprox) de un bundle-carpeta.
+
+    Usa la fecha embebida en el nombre del bundle (rápido). El tamaño de un
+    prefijo S3 no es fiable (suele reportar 0), así que se estima a partir de
+    una muestra acotada de archivos hijos y se extrapola por el número total de
+    hijos. Todas las llamadas caras pasan por `budget`.
     """
     creation_date = extract_date_from_name(bundle_name)
     last_modified_ms = 0
     total_size_bytes = 0
 
-    try:
-        details = folder.get_path_details(bundle_path) or {}
-        if isinstance(details, dict):
-            last_modified_ms = details.get("lastModified", 0) or 0
-            total_size_bytes = details.get("size", 0) or 0
-            if total_size_bytes == 0 and isinstance(details.get("children"), list):
-                total_size_bytes = sum(
-                    (c.get("size", 0) or 0) for c in details["children"] if isinstance(c, dict)
-                )
-    except Exception:
-        pass
+    info = info or {}
+    child_count = info.get("child_count", 0) or 0
+    sample_paths = []
+    seen = set()
+    for p in list(info.get("sample_first", [])) + list(info.get("sample_last", [])):
+        if p not in seen:
+            seen.add(p)
+            sample_paths.append(p)
 
-    # Fallback a archivo hijo representativo si el directorio virtual en S3 no reporta fecha o tamaño
-    if (creation_date is None and last_modified_ms <= 0) or total_size_bytes == 0:
-        sample_paths = child_paths[:10] if child_paths else []
+    # Una sola consulta al prefijo del bundle. Normalmente devuelve el
+    # lastModified y, si DSS lo calcula, el tamaño.
+    if budget is None or budget.can_call():
+        try:
+            if budget is not None:
+                budget.consume()
+            details = folder.get_path_details(bundle_path) or {}
+            if isinstance(details, dict):
+                last_modified_ms = details.get("lastModified", 0) or 0
+                total_size_bytes = details.get("size", 0) or 0
+                if total_size_bytes == 0 and isinstance(details.get("children"), list):
+                    total_size_bytes = sum(
+                        (c.get("size", 0) or 0)
+                        for c in details["children"]
+                        if isinstance(c, dict)
+                    )
+        except Exception:
+            pass
+
+    # Si no hay tamaño real, estimar con una muestra acotada de hijos.
+    if total_size_bytes == 0 and sample_paths:
         sampled_size = 0
+        sampled_n = 0
         for cp in sample_paths:
+            if budget is not None and not budget.can_call():
+                break
             try:
+                if budget is not None:
+                    budget.consume()
                 c_details = folder.get_path_details(cp) or {}
                 if isinstance(c_details, dict):
                     c_mod = c_details.get("lastModified", 0) or 0
                     if c_mod > last_modified_ms:
                         last_modified_ms = c_mod
                     sampled_size += c_details.get("size", 0) or 0
+                    sampled_n += 1
             except Exception:
                 continue
-        if total_size_bytes == 0 and sampled_size > 0:
-            total_size_bytes = sampled_size
+        if sampled_n > 0:
+            avg_size = sampled_size / sampled_n
+            total_size_bytes = int(avg_size * max(child_count, sampled_n))
 
     if creation_date is None:
         if last_modified_ms > 0:
             creation_date = datetime.fromtimestamp(last_modified_ms / 1000.0)
         else:
-            creation_date = datetime.fromtimestamp(0)
+            creation_date = None
 
     return creation_date, total_size_bytes
 
@@ -255,13 +313,20 @@ def _bundle_record(meta, s3_path, creation_date, size_bytes, source_folder, file
     }
 
 
-def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date):
+def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date, budget=None, warnings=None):
     bundles = []
     folder_bundles_map = {}
+    is_prod = folder_id == S3_FOLDER_ID_PROD
+    skipped_no_date = 0
 
     for path in paths:
         meta = parse_s3_path(path)
         if not meta:
+            continue
+
+        # En PROD solo interesan los bundles bajo <PROYECTO>/project_bundles/.
+        # Se ignora cualquier ruido raíz (sandboxes, .gz/.tar sueltos, etc.).
+        if is_prod and not meta.get("in_project_bundles"):
             continue
 
         is_folder_bundle = bool(meta.get("is_folder_bundle"))
@@ -270,18 +335,48 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date):
 
         if is_folder_bundle:
             b_path = meta["bundle_path"]
-            if b_path not in folder_bundles_map:
-                folder_bundles_map[b_path] = {
+            info = folder_bundles_map.get(b_path)
+            if info is None:
+                info = {
                     "meta": meta,
-                    "child_paths": [],
+                    "child_count": 0,
+                    # Muestra acotada: primeros y últimos hijos, sin retener
+                    # todo el árbol (.git/objects) en memoria.
+                    "sample_first": deque(maxlen=SIZE_SAMPLE_PER_BUNDLE),
+                    "sample_last": deque(maxlen=SIZE_SAMPLE_PER_BUNDLE),
                 }
-            folder_bundles_map[b_path]["child_paths"].append(path)
+                folder_bundles_map[b_path] = info
+            info["child_count"] += 1
+            info["sample_first"].append(path)
+            info["sample_last"].append(path)
             continue
 
-        details = folder.get_path_details(path) or {}
-        last_modified_ms = details.get("lastModified", 0) or 0
-        file_size_bytes = details.get("size", 0) or 0
-        creation_date = datetime.fromtimestamp(last_modified_ms / 1000.0)
+        # Bundle-archivo. Si el nombre ya trae fecha y no es candidato, se
+        # evita cualquier llamada a S3.
+        bundle_label = meta.get("bundle_name") or meta.get("filename", "")
+        name_date = extract_date_from_name(bundle_label)
+        if name_date is not None and name_date >= cutoff_date:
+            continue
+
+        last_modified_ms = 0
+        file_size_bytes = 0
+        if budget is None or budget.can_call():
+            try:
+                if budget is not None:
+                    budget.consume()
+                details = folder.get_path_details(path) or {}
+                last_modified_ms = details.get("lastModified", 0) or 0
+                file_size_bytes = details.get("size", 0) or 0
+            except Exception:
+                pass
+
+        creation_date = name_date
+        if last_modified_ms > 0:
+            creation_date = datetime.fromtimestamp(last_modified_ms / 1000.0)
+
+        if creation_date is None:
+            skipped_no_date += 1
+            continue
 
         if creation_date < cutoff_date:
             bundles.append(
@@ -290,11 +385,20 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date):
 
     for b_path, info in folder_bundles_map.items():
         meta = info["meta"]
-        child_paths = info["child_paths"]
         bundle_name = meta.get("bundle_name") or meta.get("filename", "")
+
+        # Igual que con los archivos: descartar por nombre antes de consultar.
+        name_date = extract_date_from_name(bundle_name)
+        if name_date is not None and name_date >= cutoff_date:
+            continue
+
         creation_date, total_size_bytes = get_folder_bundle_details(
-            folder, b_path, child_paths, bundle_name
+            folder, b_path, info, bundle_name, budget=budget
         )
+
+        if creation_date is None:
+            skipped_no_date += 1
+            continue
 
         if creation_date < cutoff_date:
             bundles.append(
@@ -308,6 +412,11 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date):
                 )
             )
 
+    if warnings is not None and skipped_no_date > 0:
+        warnings.append(
+            f"{skipped_no_date} bundle(s) del folder {folder_id} se omitieron por no poder determinar su fecha"
+        )
+
     return bundles
 
 
@@ -316,8 +425,10 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS):
     cutoff_date = get_six_months_ago(cutoff_days)
     bundles = []
     warnings = []
+    budget = ScanBudget()
 
     for folder_id in S3_FOLDER_IDS:
+        started = time.monotonic()
         try:
             folder = dataiku.Folder(folder_id)
             paths = folder.list_paths_in_partition()
@@ -326,9 +437,37 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS):
             continue
 
         try:
-            bundles.extend(_fetch_folder_bundles(folder, folder_id, paths, cutoff_date))
+            bundles.extend(
+                _fetch_folder_bundles(
+                    folder,
+                    folder_id,
+                    paths,
+                    cutoff_date,
+                    budget=budget,
+                    warnings=warnings,
+                )
+            )
         except Exception as e:
             warnings.append(f"Error al procesar el folder {folder_id}: {e}")
+
+        elapsed = time.monotonic() - started
+        try:
+            print(
+                f"[scan-bundles] folder={folder_id} paths={len(paths)} "
+                f"elapsed={elapsed:.1f}s detail_calls={budget.calls}/{budget.max_calls}"
+            )
+        except Exception:
+            pass
+
+    if budget.calls >= budget.max_calls:
+        warnings.append(
+            f"Se alcanzó el límite de {budget.max_calls} consultas de detalle; "
+            "algunos tamaños son estimados u omitidos."
+        )
+    if budget.out_of_time():
+        warnings.append(
+            f"El escaneo superó {SCAN_TIME_BUDGET_S:.0f}s; los resultados pueden ser parciales."
+        )
 
     return bundles, warnings
 
@@ -341,10 +480,17 @@ def get_historical_records():
     try:
         dataset = dataiku.Dataset(HISTORICAL_DATASET_NAME)
         df = dataset.get_dataframe()
-        return df.to_dict(orient="records")
+        records = df.to_dict(orient="records")
     except Exception:
         # Retornar lista vacía si el dataset aún no se ha inicializado
         return []
+
+    # Compatibilidad con datasets creados con la columna 'size_mb'.
+    for row in records:
+        current = row.get("size")
+        if current in (None, ""):
+            row["size"] = row.get("size_mb", 0)
+    return records
 
 
 def save_historical_records(records):

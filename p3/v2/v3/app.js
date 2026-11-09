@@ -376,15 +376,34 @@ function slipClose(left, right) {
 }
 
 function renderProjectTable(items, emptyMessage, ariaLabel) {
-  const rows =
-    items.length === 0
-      ? `<tr><td colspan="3">${escHtml(emptyMessage)}</td></tr>`
-      : items
-          .map(
-            (b) =>
-              `<tr><td>${escHtml(b.proyecto)}</td><td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td>${statusBtnHtml(b)}</td></tr>`,
-          )
-          .join("");
+  const list = Array.isArray(items) ? items : [];
+  let rows = "";
+  if (list.length === 0) {
+    rows = `<tr><td colspan="3">${escHtml(emptyMessage)}</td></tr>`;
+  } else {
+    // Agrupa por proyecto conservando el orden de llegada para que cada
+    // proyecto ocupe una sola celda (rowspan) con sus versiones debajo.
+    const groups = new Map();
+    for (const b of list) {
+      const key = b.proyecto || "—";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(b);
+    }
+    rows = [...groups.entries()]
+      .map(([proyecto, versions]) =>
+        versions
+          .map((b, idx) => {
+            const projectCell =
+              idx === 0
+                ? `<td class="project-cell" rowspan="${versions.length}">${escHtml(proyecto)}</td>`
+                : "";
+            const rowClass = idx === 0 ? ' class="project-start"' : "";
+            return `<tr${rowClass}>${projectCell}<td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td>${statusBtnHtml(b)}</td></tr>`;
+          })
+          .join(""),
+      )
+      .join("");
+  }
   return `<div class="table-wrap"><table class="table" aria-label="${escAttr(ariaLabel)}">
       <thead><tr><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Estatus final</th></tr></thead>
       <tbody>${rows}</tbody>

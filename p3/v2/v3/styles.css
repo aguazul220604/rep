@@ -493,6 +493,30 @@ table,
   text-transform: uppercase;
 }
 
+/* Dataiku inyecta su propio CSS de tablas (.table de Bootstrap), que fija un
+   color oscuro y rompe el contraste sobre el fondo petróleo del slip. Se fuerza
+   el color claro con mayor especificidad. */
+#main-content-container .table,
+#main-content-container .table th,
+#main-content-container .table td {
+  color: var(--ink) !important;
+}
+#main-content-container .table thead th {
+  color: var(--ink) !important;
+  background: var(--paper-inset);
+}
+#main-content-container .table tbody tr {
+  background: transparent;
+}
+#main-content-container .table .project-cell {
+  color: var(--ink);
+  font-weight: 700;
+  border-right: 1px solid var(--rule-light);
+}
+#main-content-container .table tbody tr.project-start td {
+  border-top: 1px solid var(--rule);
+}
+
 .stamp-slot {
   position: relative;
   min-height: 132px;

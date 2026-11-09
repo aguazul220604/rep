@@ -3,6 +3,7 @@ import hashlib
 import io
 import os
 import re
+import socket
 import time
 from collections import deque
 from datetime import datetime, timedelta
@@ -13,16 +14,29 @@ import pandas as pd
 # ==========================================
 # CONFIGURACIÓN Y CONSTANTES
 # ==========================================
-# Managed folders del proyecto de la webapp:
-#   LAB  -> bucket dataiku-files-2 (flujo NEW/API: dataiku/<ENV>/<NICK>/<PROYECTO>/<archivo>)
-#   PROD -> bucket dataiku-files   (flujo LEGACY: <PROYECTO>/project_bundles/...)
-# Los IDs se pueden sobreescribir por variables de entorno si el proyecto usa otros.
-S3_FOLDER_ID_LAB = os.environ.get("S3_FOLDER_ID_LAB", "LAB")
-S3_FOLDER_ID_PROD = os.environ.get("S3_FOLDER_ID_PROD", "PROD")
-S3_FOLDER_IDS = (S3_FOLDER_ID_LAB, S3_FOLDER_ID_PROD)
-FLOW_TO_FOLDER = {
-    "NEW": S3_FOLDER_ID_LAB,
-    "LEGACY": S3_FOLDER_ID_PROD,
+# Un solo managed folder por instancia. Su conexión apunta al bucket correcto:
+#   - Servidores del flujo nuevo (UAT): bucket dataiku-files-2
+#   - Servidores legacy (PROD):         bucket dataiku-files
+# La detección del servidor decide cómo interpretar las rutas del folder.
+S3_FOLDER_NAME = "S3_Bundle_Backup_Path"
+
+# Servidores del flujo nuevo. Todas sus rutas (UAT o PROD-1) se muestran como UAT.
+# hostname-substring -> nickname usado para filtrar las rutas de S3.
+NEW_FLOW_SERVER_MAP = {
+    "sd-7u15-eilw": "DKUF",
+    "sd-mn7t-ccgf": "RISP",
+    "sd-yslj-ri55": "SEGP",
+    "sd-9r2x-8twu": "BUAU",
+    "sd-fkub-coxa": "DKUU",
+    "sd-2edj-g004": "RISU",
+    "sd-4c64-tuzr": "SEGU",
+    "sd-zqo7-s06c": "DKUD",
+}
+
+# Servidores legacy. La ruta no identifica servidor; se usa el hostname local.
+LEGACY_SERVER_MAP = {
+    "sd-90d4-afu8": "sd-90d4-afu8",
+    "sd-xt24-jvpi": "sd-xt24-jvpi",
 }
 
 HISTORICAL_DATASET_NAME = "historical"
@@ -87,6 +101,87 @@ def get_cutoff_days_from_request():
         return max(0, int(raw))
     except (TypeError, ValueError):
         return DEFAULT_CUTOFF_DAYS
+
+
+def detect_current_server(hostname=None):
+    """
+    Resuelve el contexto de ejecución a partir del hostname local.
+
+    Replica el orden de s3.py: primero legacy, luego flujo nuevo y, si no hay
+    coincidencia (o falla la detección), cae a PROD (flujo LEGACY).
+
+    Retorna:
+        {
+            "hostname": str,      # nombre exacto del servidor (se muestra en UI)
+            "flow": "NEW"|"LEGACY",
+            "environment": "UAT"|"PROD",
+            "nickname": str,      # interno: filtra rutas NEW; informativo en PROD
+            "known": bool,
+        }
+    """
+    if hostname is None:
+        try:
+            hostname = socket.gethostname()
+        except Exception:
+            hostname = "unknown"
+
+    host = (hostname or "unknown").lower()
+
+    # 1. Legacy tiene prioridad (igual que s3.py)
+    for ident, display_name in LEGACY_SERVER_MAP.items():
+        if ident.lower() in host:
+            return {
+                "hostname": host,
+                "flow": "LEGACY",
+                "environment": "PROD",
+                "nickname": display_name or host,
+                "known": True,
+            }
+
+    # 2. Flujo nuevo: UAT y PROD-1 se presentan como UAT
+    for ident, nickname in NEW_FLOW_SERVER_MAP.items():
+        if ident.lower() in host:
+            return {
+                "hostname": host,
+                "flow": "NEW",
+                "environment": "UAT",
+                "nickname": nickname,
+                "known": True,
+            }
+
+    # 3. Desconocido o fallo de detección -> PROD (flujo LEGACY)
+    return {
+        "hostname": host,
+        "flow": "LEGACY",
+        "environment": "PROD",
+        "nickname": host,
+        "known": False,
+    }
+
+
+def path_belongs_to_server(path, server):
+    meta = parse_s3_path(path)
+    if not meta:
+        return False
+    if meta.get("flow") != server.get("flow"):
+        return False
+    if server.get("flow") == "NEW":
+        return meta.get("nickname") == server.get("nickname")
+    return True
+
+
+def historical_matches_server(row, server):
+    path = row.get("s3_path", "") if isinstance(row, dict) else ""
+    if not path:
+        return True
+    meta = parse_s3_path(path)
+    if not meta:
+        return True
+    if meta.get("flow") != server.get("flow"):
+        return False
+    if server.get("flow") == "NEW":
+        return meta.get("nickname") == server.get("nickname")
+    return True
 
 
 def is_bundle_path(path, flow=None, is_folder_bundle=False):
@@ -298,25 +393,28 @@ def get_folder_bundle_details(folder, bundle_path, info, bundle_name, budget=Non
     return creation_date, total_size_bytes
 
 
-def _bundle_record(meta, s3_path, creation_date, size_bytes, source_folder, filename=None):
+def _bundle_record(meta, s3_path, creation_date, size_bytes, server, filename=None):
+    flow = meta.get("flow")
+    env = "UAT" if flow == "NEW" else "PROD"
+    nickname = meta.get("nickname") if flow == "NEW" else server.get("hostname")
     return {
         "id": md5_of_path(s3_path),
         "s3_path": s3_path,
-        "flow": meta["flow"],
-        "env": meta["env"],
-        "nickname": meta["nickname"],
+        "flow": flow,
+        "env": env,
+        "nickname": nickname,
         "proyecto": meta["proyecto"],
         "filename": filename or meta.get("filename", ""),
         "fecha_creacion_s3": creation_date.strftime("%Y-%m-%d %H:%M:%S"),
         "size": round(size_bytes / (1024 * 1024), 2),
-        "source_folder": source_folder,
+        "source_folder": S3_FOLDER_NAME,
     }
 
 
-def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date, budget=None, warnings=None):
+def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warnings=None):
     bundles = []
     folder_bundles_map = {}
-    is_prod = folder_id == S3_FOLDER_ID_PROD
+    is_prod = server.get("flow") == "LEGACY"
     skipped_no_date = 0
 
     for path in paths:
@@ -324,9 +422,17 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date, budget=None, wa
         if not meta:
             continue
 
+        # Solo se procesan rutas del flujo detectado para este servidor.
+        if meta.get("flow") != server.get("flow"):
+            continue
+
         # En PROD solo interesan los bundles bajo <PROYECTO>/project_bundles/.
         # Se ignora cualquier ruido raíz (sandboxes, .gz/.tar sueltos, etc.).
         if is_prod and not meta.get("in_project_bundles"):
+            continue
+
+        # En UAT solo se muestran los bundles del servidor actual.
+        if not is_prod and meta.get("nickname") != server.get("nickname"):
             continue
 
         is_folder_bundle = bool(meta.get("is_folder_bundle"))
@@ -380,7 +486,7 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date, budget=None, wa
 
         if creation_date < cutoff_date:
             bundles.append(
-                _bundle_record(meta, path, creation_date, file_size_bytes, folder_id)
+                _bundle_record(meta, path, creation_date, file_size_bytes, server)
             )
 
     for b_path, info in folder_bundles_map.items():
@@ -407,57 +513,63 @@ def _fetch_folder_bundles(folder, folder_id, paths, cutoff_date, budget=None, wa
                     b_path,
                     creation_date,
                     total_size_bytes,
-                    folder_id,
+                    server,
                     filename=bundle_name,
                 )
             )
 
     if warnings is not None and skipped_no_date > 0:
         warnings.append(
-            f"{skipped_no_date} bundle(s) del folder {folder_id} se omitieron por no poder determinar su fecha"
+            f"{skipped_no_date} bundle(s) del folder {S3_FOLDER_NAME} se omitieron por no poder determinar su fecha"
         )
 
     return bundles
 
 
-def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS):
-    # Escanea ambos folders administrados y aplica el parser estandarizado.
+def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None):
+    # Escanea el único managed folder del servidor actual.
     cutoff_date = get_six_months_ago(cutoff_days)
     bundles = []
     warnings = []
     budget = ScanBudget()
+    server = server or detect_current_server()
 
-    for folder_id in S3_FOLDER_IDS:
-        started = time.monotonic()
-        try:
-            folder = dataiku.Folder(folder_id)
-            paths = folder.list_paths_in_partition()
-        except Exception as e:
-            warnings.append(f"No se pudo acceder al folder {folder_id}: {e}")
-            continue
+    if not server.get("known"):
+        warnings.append(
+            f"Servidor no identificado ('{server.get('hostname')}'); se asume PROD."
+        )
 
-        try:
-            bundles.extend(
-                _fetch_folder_bundles(
-                    folder,
-                    folder_id,
-                    paths,
-                    cutoff_date,
-                    budget=budget,
-                    warnings=warnings,
-                )
+    started = time.monotonic()
+    try:
+        folder = dataiku.Folder(S3_FOLDER_NAME)
+        paths = folder.list_paths_in_partition()
+    except Exception as e:
+        warnings.append(f"No se pudo acceder al folder {S3_FOLDER_NAME}: {e}")
+        return bundles, warnings, server
+
+    try:
+        bundles.extend(
+            _fetch_folder_bundles(
+                folder,
+                paths,
+                cutoff_date,
+                server,
+                budget=budget,
+                warnings=warnings,
             )
-        except Exception as e:
-            warnings.append(f"Error al procesar el folder {folder_id}: {e}")
+        )
+    except Exception as e:
+        warnings.append(f"Error al procesar el folder {S3_FOLDER_NAME}: {e}")
 
-        elapsed = time.monotonic() - started
-        try:
-            print(
-                f"[scan-bundles] folder={folder_id} paths={len(paths)} "
-                f"elapsed={elapsed:.1f}s detail_calls={budget.calls}/{budget.max_calls}"
-            )
-        except Exception:
-            pass
+    elapsed = time.monotonic() - started
+    try:
+        print(
+            f"[scan-bundles] folder={S3_FOLDER_NAME} flow={server.get('flow')} "
+            f"host={server.get('hostname')} paths={len(paths)} elapsed={elapsed:.1f}s "
+            f"detail_calls={budget.calls}/{budget.max_calls}"
+        )
+    except Exception:
+        pass
 
     if budget.calls >= budget.max_calls:
         warnings.append(
@@ -469,7 +581,7 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS):
             f"El escaneo superó {SCAN_TIME_BUDGET_S:.0f}s; los resultados pueden ser parciales."
         )
 
-    return bundles, warnings
+    return bundles, warnings, server
 
 
 # ==========================================
@@ -506,10 +618,15 @@ def save_historical_records(records):
 @app.route("/scan-bundles", methods=["GET"])
 def api_scan_bundles():
     cutoff_days = get_cutoff_days_from_request()
-    s3_bundles, warnings = fetch_s3_bundles(cutoff_days=cutoff_days)
+    server = detect_current_server()
+    s3_bundles, warnings, server = fetch_s3_bundles(
+        cutoff_days=cutoff_days, server=server
+    )
     historical = get_historical_records()
     historical_paths = {
-        str(h["s3_path"]).rstrip("/") for h in historical if "s3_path" in h and h["s3_path"]
+        str(h["s3_path"]).rstrip("/")
+        for h in historical
+        if "s3_path" in h and h["s3_path"] and historical_matches_server(h, server)
     }
     candidates = [
         b for b in s3_bundles if str(b["s3_path"]).rstrip("/") not in historical_paths
@@ -549,6 +666,7 @@ def api_scan_bundles():
         "status": "success",
         "bundles": final_bundles,
         "warnings": warnings,
+        "server": server,
         "periodo_ejecucion": datetime.now().strftime("%b %Y"),
         "criterio_antiguedad": criterio,
         "cutoff_days": cutoff_days,
@@ -562,23 +680,31 @@ def api_get_historical():
     Re-deriva flow, env, nickname y filename desde s3_path para corregir
     registros guardados con clasificaciones anteriores.
     """
+    server = detect_current_server()
     historical = get_historical_records()
     final_bundles = []
 
     for row in historical:
+        if not historical_matches_server(row, server):
+            continue
+
         path = row.get("s3_path", "")
         meta = parse_s3_path(path) if path else None
         stored_flow = str(row.get("flow", "") or "")
-        flow = meta["flow"] if meta else stored_flow
+        flow = meta["flow"] if meta else (stored_flow or server.get("flow"))
 
         if meta:
-            env = meta["env"]
-            nickname = meta["nickname"]
+            env = "UAT" if flow == "NEW" else "PROD"
+            nickname = meta["nickname"] if flow == "NEW" else server.get("hostname")
             proyecto = meta["proyecto"] or row.get("proyecto", "")
             filename = meta["filename"]
         else:
-            env = "LAB" if flow == "NEW" else ("PROD" if flow == "LEGACY" else "")
-            nickname = "LAB" if flow == "NEW" else ("LEGACY" if flow == "LEGACY" else "")
+            env = "UAT" if flow == "NEW" else ("PROD" if flow == "LEGACY" else "")
+            nickname = (
+                server.get("hostname", "")
+                if flow == "LEGACY"
+                else (server.get("nickname") or "")
+            )
             proyecto = row.get("proyecto", "")
             filename = path.rstrip("/").split("/")[-1] if path else ""
 
@@ -594,12 +720,13 @@ def api_get_historical():
             "fecha_periodo_limpieza": str(row.get("fecha_periodo_limpieza", "")),
             "size": row.get("size", 0),
             "estado": "Conservado",
-            "source_folder": FLOW_TO_FOLDER.get(flow, ""),
+            "source_folder": S3_FOLDER_NAME,
         })
 
     return jsonify({
         "status": "success",
         "bundles": final_bundles,
+        "server": server,
         "periodo_ejecucion": datetime.now().strftime("%b %Y"),
     })
 
@@ -626,16 +753,25 @@ def api_authorize_cleanup():
                 "message": "Cada bundle requiere 's3_path' y estado Conservado/Descartado",
             }), 400
 
+    server = detect_current_server()
+    invalid_paths = [
+        b.get("s3_path")
+        for b in items
+        if not path_belongs_to_server(b.get("s3_path"), server)
+    ]
+    if invalid_paths:
+        return jsonify({
+            "status": "error",
+            "message": "Hay bundles que no pertenecen al servidor/flujo actual",
+            "server": server,
+            "paths": [str(p) for p in invalid_paths[:20]],
+        }), 400
+
     current_period = datetime.now().strftime("%Y-%m-%d")
-    folder_cache = {}
+    folder = dataiku.Folder(S3_FOLDER_NAME)
 
     def get_folder_for(bundle):
-        folder_id = bundle.get("source_folder") or FLOW_TO_FOLDER.get(bundle.get("flow"))
-        if folder_id not in S3_FOLDER_IDS:
-            raise ValueError(f"Folder no identificado para {bundle.get('s3_path')}")
-        if folder_id not in folder_cache:
-            folder_cache[folder_id] = dataiku.Folder(folder_id)
-        return folder_cache[folder_id]
+        return folder
 
     to_delete = [b for b in items if b.get("estado") == "Descartado"]
     to_preserve = [b for b in items if b.get("estado") == "Conservado"]
@@ -702,7 +838,10 @@ def api_authorize_cleanup():
 @app.route("/global-report", methods=["GET"])
 def api_global_report():
     cutoff_days = get_cutoff_days_from_request()
-    s3_bundles, warnings = fetch_s3_bundles(cutoff_days=cutoff_days)
+    server = detect_current_server()
+    s3_bundles, warnings, server = fetch_s3_bundles(
+        cutoff_days=cutoff_days, server=server
+    )
     if warnings:
         try:
             app.logger.warning(" | ".join(warnings))
@@ -711,7 +850,9 @@ def api_global_report():
 
     historical = get_historical_records()
     historical_by_path = {
-        str(h["s3_path"]).rstrip("/"): h for h in historical if "s3_path" in h and h["s3_path"]
+        str(h["s3_path"]).rstrip("/"): h
+        for h in historical
+        if "s3_path" in h and h["s3_path"] and historical_matches_server(h, server)
     }
     current_period = datetime.now().strftime("%Y-%m-%d")
 

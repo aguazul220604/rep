@@ -609,6 +609,53 @@ table,
   }
 }
 
+/* Preloader de pantalla completa (carga de S3 / histórico) */
+.preloader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: var(--s6);
+  background: color-mix(in srgb, var(--c-azul-oscuro) 88%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.preloader[hidden] {
+  display: none;
+}
+.preloader-panel {
+  display: grid;
+  justify-items: center;
+  gap: var(--s4);
+  min-width: 260px;
+  max-width: 360px;
+  padding: var(--s6) var(--s8);
+  background: var(--panel);
+  border: 1px solid var(--panel-rule-strong);
+  text-align: center;
+}
+.preloader-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid var(--panel-rule-strong);
+  border-top-color: var(--signal);
+  border-radius: 50%;
+  animation: preloader-spin 0.9s linear infinite;
+}
+.preloader-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  letter-spacing: 0.08em;
+  color: var(--panel-ink-mid);
+}
+@keyframes preloader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Topband */
 .topband {
   background: var(--c-azul);
@@ -805,6 +852,38 @@ footer.masthead .masthead-meta {
   flex-wrap: wrap;
 }
 
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+  padding: var(--s3) var(--s4);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+}
+.context-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.context-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.context-item strong {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  font-weight: 700;
+  color: var(--ink-mid);
+}
+.context-sep {
+  color: var(--ink-soft);
+}
+
 .cards-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -993,5 +1072,8 @@ footer.masthead .masthead-meta {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  .preloader-spinner {
+    animation: none;
   }
 }

@@ -121,15 +121,33 @@ window.AppState = {
   criterioAntiguedad: "> 6 meses",
   scanBundles: [],
   historicBundles: [],
-  currentFlow: "NEW",
+  server: {
+    hostname: "—",
+    environment: "—",
+    flow: "NEW",
+    known: true,
+  },
   currentSection: "CLEANUP",
-  currentEnv: "ALL",
   isLoading: false,
   busy: false,
+  preloaderText: "Leyendo S3 y dataset histórico…",
 
   async init() {
-    this.renderCurrentView();
+    this.isLoading = true;
+    this.preloaderText = "Leyendo S3 y dataset histórico…";
+    this.renderPreloader();
     await this.fetchScanBundles();
+  },
+
+  renderPreloader() {
+    const node = document.getElementById("preloader");
+    if (!node) return;
+    const visible = Boolean(this.isLoading);
+    if (visible) {
+      const txt = document.getElementById("preloader-text");
+      if (txt) txt.textContent = this.preloaderText;
+    }
+    node.hidden = !visible;
   },
 
   getBundleSize(b) {
@@ -161,7 +179,9 @@ window.AppState = {
 
   async fetchScanBundles() {
     this.isLoading = true;
+    this.preloaderText = "Leyendo S3 y dataset histórico…";
     hideError();
+    this.renderPreloader();
     this.renderCurrentView();
     try {
       const url = apiUrl(API.scan + this.getCutoffQuery());
@@ -170,6 +190,7 @@ window.AppState = {
       const data = await response.json();
       if (data.status === "success") {
         this.scanBundles = data.bundles || [];
+        if (data.server) this.server = data.server;
         this.periodoEjecucion = data.periodo_ejecucion || this.periodoEjecucion;
         this.criterioAntiguedad =
           data.criterio_antiguedad || this.criterioAntiguedad;
@@ -177,12 +198,8 @@ window.AppState = {
           showWarning(data.warnings.join(" · "));
         }
         try {
-          const nNew = this.scanBundles.filter((b) => b.flow === "NEW").length;
-          const nLegacy = this.scanBundles.filter(
-            (b) => b.flow === "LEGACY",
-          ).length;
           console.log(
-            `[scan-bundles] total=${this.scanBundles.length} LAB(NEW)=${nNew} PROD(LEGACY)=${nLegacy} cutoff_days=${data.cutoff_days ?? "n/a"}`,
+            `[scan-bundles] host=${this.server.hostname} env=${this.server.environment} flow=${this.server.flow} total=${this.scanBundles.length} cutoff_days=${data.cutoff_days ?? "n/a"}`,
           );
         } catch (_) {}
       } else {
@@ -205,6 +222,7 @@ window.AppState = {
       }
     } finally {
       this.isLoading = false;
+      this.renderPreloader();
       this.renderMetrics();
       this.renderCurrentView();
     }
@@ -212,7 +230,9 @@ window.AppState = {
 
   async fetchHistoricBundles() {
     this.isLoading = true;
+    this.preloaderText = "Leyendo histórico de bundles…";
     hideError();
+    this.renderPreloader();
     this.renderCurrentView();
     try {
       const url = apiUrl(API.historical);
@@ -221,6 +241,7 @@ window.AppState = {
       const data = await response.json();
       if (data.status === "success") {
         this.historicBundles = data.bundles || [];
+        if (data.server) this.server = data.server;
       } else {
         showError("Error al obtener histórico: respuesta inválida del backend");
       }
@@ -239,6 +260,7 @@ window.AppState = {
       }
     } finally {
       this.isLoading = false;
+      this.renderPreloader();
       this.renderMetrics();
       this.renderCurrentView();
     }
@@ -253,15 +275,6 @@ window.AppState = {
       this.renderMetrics();
       this.renderCurrentView();
     }
-  },
-
-  setFlow(flow) {
-    if (flow !== "NEW" && flow !== "LEGACY") return;
-    this.currentFlow = flow;
-    const sel = $("#select-flow-dropdown");
-    if (sel && sel.value !== flow) sel.value = flow;
-    syncFlowTabs();
-    this.switchSection("CLEANUP");
   },
 
   get activeBundles() {
@@ -339,23 +352,21 @@ window.AppState.renderCurrentView = function () {
     return;
   }
   const bundles = this.activeBundles;
-  if (this.currentFlow === "NEW" && this.currentSection === "CLEANUP") {
-    host.innerHTML = renderNewFlowCleanup(bundles);
-  } else if (this.currentFlow === "NEW" && this.currentSection === "HISTORIC") {
-    host.innerHTML = renderNewFlowHistoric(bundles, this.currentEnv);
-  } else if (
-    this.currentFlow === "LEGACY" &&
-    this.currentSection === "CLEANUP"
-  ) {
-    host.innerHTML = renderLegacyCleanup(bundles);
-  } else if (
-    this.currentFlow === "LEGACY" &&
-    this.currentSection === "HISTORIC"
-  ) {
-    host.innerHTML = renderLegacyHistoric(bundles);
+  if (this.currentSection === "HISTORIC") {
+    host.innerHTML = renderHistorico(bundles);
+  } else {
+    host.innerHTML = renderVersionamiento(bundles);
   }
-  syncFlowTabs();
 };
+
+function renderContextHeader() {
+  const s = window.AppState.server || {};
+  return `<div class="context-bar">
+    <span class="context-item"><span class="context-label">Ambiente</span><strong>${escHtml(s.environment || "—")}</strong></span>
+    <span class="context-sep" aria-hidden="true">·</span>
+    <span class="context-item"><span class="context-label">Servidor</span><strong>${escHtml(s.hostname || "—")}</strong></span>
+  </div>`;
+}
 
 function statusBtnHtml(b) {
   const estado = b.estado || "Conservado";
@@ -410,154 +421,28 @@ function renderProjectTable(items, emptyMessage, ariaLabel) {
     </table></div>`;
 }
 
-function renderNewFlowCleanup(bundles) {
-  const newBundles = bundles.filter((b) => b.flow === "NEW");
-  const uatItems = newBundles.filter(
-    (b) => (b.env || "").toUpperCase() === "UAT",
-  );
-  const prodItems = newBundles.filter(
-    (b) => (b.env || "").toUpperCase() === "PROD-1",
-  );
-  const directItems = newBundles.filter((b) => {
-    const env = (b.env || "").toUpperCase();
-    return env !== "UAT" && env !== "PROD-1";
-  });
-
-  const hasFallbackEnvs = uatItems.length > 0 || prodItems.length > 0;
-
-  let bodyHtml = "";
-  if (directItems.length > 0 || !hasFallbackEnvs) {
-    bodyHtml += renderProjectTable(
-      directItems,
-      "No hay registros en LAB",
-      "Versionamiento LAB",
-    );
-  }
-  if (hasFallbackEnvs) {
-    bodyHtml += `<div class="cards-grid-2" style="${directItems.length > 0 ? "margin-top: var(--s6)" : ""}">
-      <div class="env-card"><h3 class="env-title">UAT</h3>${renderProjectGroups(uatItems)}</div>
-      <div class="env-card"><h3 class="env-title">PROD-1</h3>${renderProjectGroups(prodItems)}</div>
-    </div>`;
-  }
-
-  return `${slipOpen("LAB | Versionamiento de proyectos", "versionamiento")}
+function renderVersionamiento(bundles) {
+  const items = Array.isArray(bundles) ? bundles : [];
+  return `${slipOpen("Versionamiento de proyectos", "versionamiento")}
+    ${renderContextHeader()}
     <div class="view-title-row">
       <div class="controls-group"><span class="field-label" style="margin:0">Agrupado por proyecto · excluye histórico</span></div>
       <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('HISTORIC')">Consultar histórico</button></div>
     </div>
-    ${bodyHtml}
-    ${slipClose(`${newBundles.length} bundles · la versión más reciente se conserva (default)`, "BN-01")}`;
+    ${renderProjectTable(items, "No hay registros de versionamiento", "Versionamiento")}
+    ${slipClose(`${items.length} bundles · la versión más reciente se conserva (default)`, "BN-01")}`;
 }
 
-function renderNewFlowHistoric(bundles, selectedEnv) {
-  const allNewItems = bundles.filter(
-    (b) => (b.flow || "").trim().toUpperCase() === "NEW",
-  );
-  const hasFallbackEnvs = allNewItems.some((b) => {
-    const env = (b.env || "").trim().toUpperCase();
-    return env === "UAT" || env === "PROD-1";
-  });
-
-  if (!hasFallbackEnvs) {
-    return `${slipOpen("LAB | Histórico de proyectos", "histórico")}
-      <div class="view-title-row">
-        <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico · LAB</span></div>
-        <div class="controls-group">
-          <button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('CLEANUP')">Consultar versionamiento</button>
-        </div>
-      </div>
-      ${renderProjectTable(allNewItems, "No hay registros históricos en LAB", "Histórico LAB")}
-      ${slipClose(`${allNewItems.length} registros en histórico`, "BN-02")}`;
-  }
-
-  const targetEnv = (selectedEnv || "ALL").trim().toUpperCase();
-  const items =
-    targetEnv === "ALL"
-      ? allNewItems
-      : allNewItems.filter(
-          (b) => (b.env || "").trim().toUpperCase() === targetEnv,
-        );
-
-  const rows =
-    items.length === 0
-      ? `<tr><td colspan="4">No hay registros para este ambiente</td></tr>`
-      : items
-          .map(
-            (b) =>
-              `<tr><td>${escHtml(b.nickname || b.env || "LAB")}</td><td>${escHtml(b.proyecto)}</td><td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td>${statusBtnHtml(b)}</td></tr>`,
-          )
-          .join("");
-  return `${slipOpen("LAB | Histórico de proyectos", "histórico")}
+function renderHistorico(bundles) {
+  const items = Array.isArray(bundles) ? bundles : [];
+  return `${slipOpen("Histórico de proyectos", "histórico")}
+    ${renderContextHeader()}
     <div class="view-title-row">
-      <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico · ${escHtml(targetEnv === "ALL" ? "TODOS" : targetEnv)}</span></div>
-      <div class="controls-group">
-        <button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('CLEANUP')">Consultar versionamiento</button>
-        <select class="select" aria-label="Ambiente" onchange="AppState.currentEnv=this.value; AppState.renderCurrentView();">
-          <option value="ALL" ${targetEnv === "ALL" ? "selected" : ""}>TODOS</option>
-          <option value="LAB" ${targetEnv === "LAB" ? "selected" : ""}>LAB</option>
-          <option value="UAT" ${targetEnv === "UAT" ? "selected" : ""}>UAT</option>
-          <option value="PROD-1" ${targetEnv === "PROD-1" ? "selected" : ""}>PROD-1</option>
-        </select>
-      </div>
-    </div>
-    <div class="table-wrap"><table class="table" aria-label="Histórico LAB">
-      <thead><tr><th scope="col">Servidor</th><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Estatus final</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-    ${slipClose(`${items.length} registros en histórico`, "BN-02")}`;
-}
-
-function renderLegacyCleanup(bundles) {
-  const items = bundles.filter((b) => b.flow === "LEGACY");
-  return `${slipOpen("PROD | Versionamiento de proyectos", "versionamiento")}
-    <div class="view-title-row">
-      <div class="controls-group"><span class="field-label" style="margin:0">Agrupado por proyecto · excluye histórico</span></div>
-      <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('HISTORIC')">Consultar histórico</button></div>
-    </div>
-    ${renderProjectTable(items, "No hay registros en PROD", "Versionamiento PROD")}
-    ${slipClose(`${items.length} bundles · la versión más reciente se conserva (default)`, "BN-03")}`;
-}
-
-function renderLegacyHistoric(bundles) {
-  const items = bundles.filter((b) => b.flow === "LEGACY");
-  return `${slipOpen("PROD | Histórico de proyectos", "histórico")}
-    <div class="view-title-row">
-      <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico · PROD</span></div>
+      <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico</span></div>
       <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('CLEANUP')">Consultar versionamiento</button></div>
     </div>
-    ${renderProjectTable(items, "No hay registros históricos", "Histórico PROD")}
-    ${slipClose(`${items.length} registros en histórico`, "BN-04")}`;
-}
-
-function renderProjectGroups(items) {
-  if (!items || items.length === 0)
-    return emptyBlock("Sin versionamientos detectados");
-  const grouped = {};
-  items.forEach((item) => {
-    const key = `${item.nickname || "N/A"}|||${item.proyecto}`;
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(item);
-  });
-  return Object.keys(grouped)
-    .sort()
-    .map((key) => {
-      const [nickname, proj] = key.split("|||");
-      const rows = grouped[key]
-        .map(
-          (b) => `
-      <div class="version-row">
-        <span class="version-name" title="${escAttr(b.s3_path)}">${escHtml(b.proyecto)}/${escHtml(b.filename)}</span>
-        ${statusBtnHtml(b)}
-      </div>`,
-        )
-        .join("");
-      const tagLabel =
-        nickname && nickname !== "LAB" && nickname !== "N/A"
-          ? `${escHtml(nickname)} · ${escHtml(proj)}`
-          : escHtml(proj);
-      return `<div class="project-box"><span class="server-tag">${tagLabel}</span><div class="versions-list">${rows}</div></div>`;
-    })
-    .join("");
+    ${renderProjectTable(items, "No hay registros históricos", "Histórico")}
+    ${slipClose(`${items.length} registros en histórico`, "BN-02")}`;
 }
 
 /* =====================================================================
@@ -663,30 +548,16 @@ window.triggerGlobalReport = async function () {
 /* =====================================================================
    VIEW SWITCH
    ===================================================================== */
-function syncFlowTabs() {
-  const flow = window.AppState.currentFlow;
-  $$(".viewnav-tab").forEach((t) =>
-    t.setAttribute("aria-selected", String(t.dataset.flow === flow)),
-  );
-}
-
 function syncHash() {
-  const flow = (window.AppState.currentFlow || "NEW").toLowerCase();
   const section = (window.AppState.currentSection || "CLEANUP").toLowerCase();
-  const hash = `#/${flow}/${section}`;
+  const hash = `#/${section}`;
   if (location.hash !== hash) history.replaceState(null, "", hash);
 }
 
 function applyHash() {
   const h = (location.hash || "").toLowerCase();
-  if (h.includes("legacy") || h.includes("prod"))
-    window.AppState.currentFlow = "LEGACY";
-  else if (h.includes("new") || h.includes("lab"))
-    window.AppState.currentFlow = "NEW";
   if (h.includes("historic")) window.AppState.currentSection = "HISTORIC";
   else if (h.includes("cleanup")) window.AppState.currentSection = "CLEANUP";
-  const sel = $("#select-flow-dropdown");
-  if (sel) sel.value = window.AppState.currentFlow;
 }
 
 /* =====================================================================
@@ -707,14 +578,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(tickClock, 1000);
   applyHash();
 
-  const flowDropdown = document.getElementById("select-flow-dropdown");
-  if (flowDropdown) {
-    flowDropdown.value = window.AppState.currentFlow;
-    flowDropdown.addEventListener("change", (e) => {
-      window.AppState.setFlow(e.target.value);
-    });
-  }
-
   const retryBtn = document.getElementById("app-alert-retry");
   if (retryBtn) {
     retryBtn.addEventListener("click", () => {
@@ -722,9 +585,6 @@ document.addEventListener("DOMContentLoaded", () => {
       window.AppState.fetchScanBundles();
     });
   }
-  $$(".viewnav-tab").forEach((t) =>
-    t.addEventListener("click", () => window.AppState.setFlow(t.dataset.flow)),
-  );
 
   window.AppState.init();
 });

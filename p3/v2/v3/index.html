@@ -7,6 +7,21 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <div
+      class="preloader"
+      id="preloader"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      hidden
+    >
+      <div class="preloader-panel">
+        <span class="preloader-spinner" aria-hidden="true"></span>
+        <p class="preloader-text" id="preloader-text">
+          Leyendo S3 y dataset histórico…
+        </p>
+      </div>
+    </div>
     <div class="topband">
       <div class="topbar">
         <div class="topbar-inner">
@@ -1427,43 +1442,8 @@
             <dt class="visually-hidden">Periodo</dt>
             <dd><b id="meta-holder">Auditoría S3</b></dd>
           </div>
-          <div>
-            <dt class="visually-hidden">Flow</dt>
-            <dd>
-              <select
-                id="select-flow-dropdown"
-                class="select input flow-select"
-                aria-label="Flow"
-              >
-                <option value="NEW" selected>LAB</option>
-                <option value="LEGACY">PROD</option>
-              </select>
-            </dd>
-          </div>
         </dl>
       </header>
-      <nav class="viewnav" role="tablist" aria-label="Flows">
-        <button
-          class="viewnav-tab"
-          role="tab"
-          id="tab-new"
-          aria-selected="true"
-          data-flow="NEW"
-          type="button"
-        >
-          LAB
-        </button>
-        <button
-          class="viewnav-tab"
-          role="tab"
-          id="tab-legacy"
-          aria-selected="false"
-          data-flow="LEGACY"
-          type="button"
-        >
-          PROD
-        </button>
-      </nav>
     </div>
 
     <main class="page">

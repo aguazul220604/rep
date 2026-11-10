@@ -55,6 +55,10 @@ function escAttr(value) {
   return escHtml(value).replace(/'/g, "&#39;");
 }
 
+const STATUS_LABELS = { Conservado: "Conservar", Descartado: "Eliminar" };
+const statusLabel = (estado) =>
+  STATUS_LABELS[estado] || STATUS_LABELS.Conservado;
+
 function showError(message, allowRetry = false) {
   const box = $("#app-alert");
   const txt = $("#app-alert-text");
@@ -92,6 +96,58 @@ function hideError() {
   if (retry) retry.hidden = true;
 }
 
+function confirmAction(options = {}) {
+  const message = options.message || "¿Deseas continuar?";
+  const modal = $("#confirm-modal");
+  if (!modal) return Promise.resolve(window.confirm(message));
+
+  const title = $("#confirm-modal-title");
+  const text = $("#confirm-modal-text");
+  const confirmBtn = modal.querySelector("[data-modal-confirm]");
+  const cancelBtn = modal.querySelector("button[data-modal-cancel]");
+  const cancelEls = modal.querySelectorAll("[data-modal-cancel]");
+  const previouslyFocused = document.activeElement;
+
+  if (title) title.textContent = options.title || "Confirmar acción";
+  if (text) text.textContent = message;
+  if (confirmBtn) confirmBtn.textContent = options.confirmLabel || "Confirmar";
+
+  modal.hidden = false;
+  document.body.classList.add("confirm-open");
+
+  return new Promise((resolve) => {
+    function finish(result) {
+      modal.hidden = true;
+      document.body.classList.remove("confirm-open");
+      modal.removeEventListener("keydown", onKeyDown);
+      confirmBtn?.removeEventListener("click", onConfirm);
+      cancelEls.forEach((el) => el.removeEventListener("click", onCancel));
+      if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+      resolve(result);
+    }
+    function onConfirm() {
+      finish(true);
+    }
+    function onCancel() {
+      finish(false);
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    }
+    confirmBtn?.addEventListener("click", onConfirm);
+    cancelEls.forEach((el) => el.addEventListener("click", onCancel));
+    modal.addEventListener("keydown", onKeyDown);
+    if (cancelBtn) cancelBtn.focus();
+    else if (confirmBtn) confirmBtn.focus();
+  });
+}
+window.confirmAction = confirmAction;
+
 function tickClock() {
   const node = $("#topbar-clock");
   if (!node) return;
@@ -127,6 +183,8 @@ window.AppState = {
     flow: "NEW",
     known: true,
   },
+  recentBundles: [],
+  recentSort: "project",
   currentSection: "CLEANUP",
   isLoading: false,
   busy: false,
@@ -183,6 +241,7 @@ window.AppState = {
     hideError();
     this.renderPreloader();
     this.renderCurrentView();
+    renderRecentSection();
     try {
       const url = apiUrl(API.scan + this.getCutoffQuery());
       const response = await fetchWithTimeout(url, {}, 90000);
@@ -190,6 +249,7 @@ window.AppState = {
       const data = await response.json();
       if (data.status === "success") {
         this.scanBundles = data.bundles || [];
+        this.recentBundles = data.recent_bundles || [];
         if (data.server) this.server = data.server;
         this.periodoEjecucion = data.periodo_ejecucion || this.periodoEjecucion;
         this.criterioAntiguedad =
@@ -225,6 +285,7 @@ window.AppState = {
       this.renderPreloader();
       this.renderMetrics();
       this.renderCurrentView();
+      renderRecentSection();
     }
   },
 
@@ -316,6 +377,15 @@ window.AppState = {
     this.renderMetrics();
     this.renderCurrentView();
   },
+
+  setAllActive(estado) {
+    if (estado !== "Conservado" && estado !== "Descartado") return;
+    const items = this.activeBundles || [];
+    if (items.length === 0) return;
+    for (const b of items) b.estado = estado;
+    this.renderMetrics();
+    this.renderCurrentView();
+  },
 };
 
 /* =====================================================================
@@ -338,6 +408,7 @@ window.AppState.renderMetrics = function () {
   set("stat-periodo-top", this.periodoEjecucion);
   set("stat-criterio-top", this.criterioAntiguedad);
   set("meta-asof", `as of ${this.periodoEjecucion}`);
+  set("guide-criterio", this.criterioAntiguedad);
 };
 
 window.AppState.renderCurrentView = function () {
@@ -357,7 +428,36 @@ window.AppState.renderCurrentView = function () {
   } else {
     host.innerHTML = renderVersionamiento(bundles);
   }
+  syncSelectAll();
 };
+
+function syncSelectAll() {
+  const check = document.querySelector(
+    "#main-content-container .select-all-check",
+  );
+  if (!check) return;
+  const items = window.AppState.activeBundles || [];
+  if (items.length === 0) {
+    check.disabled = true;
+    check.checked = false;
+    check.indeterminate = false;
+    check.setAttribute("aria-label", "No hay bundles para seleccionar");
+    check.title = "No hay bundles para seleccionar";
+    return;
+  }
+  const descartados = items.filter(
+    (b) => (b.estado || "Conservado") === "Descartado",
+  ).length;
+  const allDesc = descartados === items.length;
+  check.disabled = false;
+  check.checked = allDesc;
+  check.indeterminate = descartados > 0 && !allDesc;
+  const label = allDesc
+    ? "Conservar todos"
+    : "Eliminar todos";
+  check.setAttribute("aria-label", label);
+  check.title = label;
+}
 
 function renderContextHeader() {
   const s = window.AppState.server || {};
@@ -372,7 +472,8 @@ function statusBtnHtml(b) {
   const estado = b.estado || "Conservado";
   const cls = estado.toLowerCase();
   const icon = estado === "Descartado" ? "✖" : "✔";
-  return `<button class="status-toggle-btn ${cls}" type="button" data-s3-path="${escAttr(b.s3_path)}" aria-label="${escAttr(estado)} ${escAttr(b.filename || b.s3_path)}"><span class="icon" aria-hidden="true">${icon}</span><span>${escHtml(estado)}</span></button>`;
+  const label = statusLabel(estado);
+  return `<button class="status-toggle-btn ${cls}" type="button" data-s3-path="${escAttr(b.s3_path)}" aria-label="${escAttr(label)} ${escAttr(b.filename || b.s3_path)}"><span class="icon" aria-hidden="true">${icon}</span><span>${escHtml(label)}</span></button>`;
 }
 
 function emptyBlock(text) {
@@ -386,11 +487,26 @@ function slipClose(left, right) {
   return `<footer class="slip-foot"><span>${escHtml(left)}</span><span>${escHtml(right)}</span></footer></article>`;
 }
 
-function renderProjectTable(items, emptyMessage, ariaLabel) {
+function formatBundleDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "—";
+  if (["nan", "nat", "none", "null"].includes(text.toLowerCase())) return "—";
+  return text;
+}
+
+function formatBundleSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return "—";
+  return `${size.toFixed(2)} MB`;
+}
+
+function renderProjectTable(items, emptyMessage, ariaLabel, options = {}) {
   const list = Array.isArray(items) ? items : [];
+  const showCleanupPeriod = Boolean(options.showCleanupPeriod);
+  const columnCount = showCleanupPeriod ? 6 : 5;
   let rows = "";
   if (list.length === 0) {
-    rows = `<tr><td colspan="3">${escHtml(emptyMessage)}</td></tr>`;
+    rows = `<tr><td colspan="${columnCount}">${escHtml(emptyMessage)}</td></tr>`;
   } else {
     // Agrupa por proyecto conservando el orden de llegada para que cada
     // proyecto ocupe una sola celda (rowspan) con sus versiones debajo.
@@ -409,14 +525,26 @@ function renderProjectTable(items, emptyMessage, ariaLabel) {
                 ? `<td class="project-cell" rowspan="${versions.length}">${escHtml(proyecto)}</td>`
                 : "";
             const rowClass = idx === 0 ? ' class="project-start"' : "";
-            return `<tr${rowClass}>${projectCell}<td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td>${statusBtnHtml(b)}</td></tr>`;
+            const cleanupCell = showCleanupPeriod
+              ? `<td class="cell-date">${escHtml(formatBundleDate(b.fecha_periodo_limpieza))}</td>`
+              : "";
+            return `<tr${rowClass}>${projectCell}<td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td class="cell-date">${escHtml(formatBundleDate(b.fecha_creacion_s3))}</td><td class="cell-size">${escHtml(formatBundleSize(b.size ?? b.size_mb))}</td>${cleanupCell}<td>${statusBtnHtml(b)}</td></tr>`;
           })
           .join(""),
       )
       .join("");
   }
+  const cleanupHeader = showCleanupPeriod
+    ? '<th scope="col">Periodo de limpieza</th>'
+    : "";
+  const allDescartado =
+    list.length > 0 &&
+    list.every((b) => (b.estado || "Conservado") === "Descartado");
+  const selectAllLabel = allDescartado
+    ? "Conservar todos"
+    : "Eliminar todos";
   return `<div class="table-wrap"><table class="table" aria-label="${escAttr(ariaLabel)}">
-      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Estatus final</th></tr></thead>
+      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Fecha creación S3</th><th scope="col">Peso</th>${cleanupHeader}<th scope="col" class="status-col-head"><label class="select-all"><input type="checkbox" class="select-all-check"${allDescartado ? " checked" : ""}${list.length === 0 ? " disabled" : ""} aria-label="${escAttr(selectAllLabel)}" title="${escAttr(selectAllLabel)}"><span class="visually-hidden">Seleccionar todos</span></label><span class="status-col-label">Acción al autorizar</span></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -441,8 +569,107 @@ function renderHistorico(bundles) {
       <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico</span></div>
       <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('CLEANUP')">Consultar versionamiento</button></div>
     </div>
-    ${renderProjectTable(items, "No hay registros históricos", "Histórico")}
+    ${renderProjectTable(items, "No hay registros históricos", "Histórico", { showCleanupPeriod: true })}
     ${slipClose(`${items.length} registros en histórico`, "BN-02")}`;
+}
+
+function formatRemaining(value) {
+  const dias = Number(value);
+  if (!Number.isFinite(dias)) return "—";
+  if (dias <= 0) return "Hoy";
+  if (dias === 1) return "1 día";
+  return `${dias} días`;
+}
+
+function renderRecentSection() {
+  const app = window.AppState;
+  const contextEl = $("#recent-context");
+  const countEl = $("#recent-count");
+  const contentEl = $("#recent-content");
+  const sortBtn = $("#recent-sort-btn");
+  const server = app.server || {};
+
+  if (contextEl) {
+    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}`;
+  }
+  if (sortBtn) {
+    sortBtn.textContent =
+      app.recentSort === "proximity"
+        ? "Ordenar por proyecto"
+        : "Ordenar por proximidad";
+  }
+  if (countEl) {
+    if (app.isLoading) countEl.textContent = "Cargando…";
+    else countEl.textContent = `${(app.recentBundles || []).length} bundles`;
+  }
+  if (!contentEl) return;
+
+  if (app.isLoading) {
+    contentEl.innerHTML = `<div class="skeleton is-tall"></div><div class="skeleton"></div><div class="skeleton is-short"></div>`;
+    return;
+  }
+
+  const items = app.recentBundles || [];
+  if (items.length === 0) {
+    contentEl.innerHTML = `<div class="state-block"><p class="state-word">Sin registros</p><p class="state-sub">No hay bundles en la ventana de 6 meses.</p></div>`;
+    return;
+  }
+  contentEl.innerHTML = renderRecentTable(items, app.recentSort);
+}
+
+function renderRecentTable(items, sortMode) {
+  const groups = new Map();
+  for (const b of items) {
+    const key = b.proyecto || "—";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(b);
+  }
+
+  const groupList = [...groups.entries()].map(([proyecto, versions]) => {
+    const sorted = [...versions].sort((a, b) => {
+      const da = Number(a.dias_para_limpieza);
+      const db = Number(b.dias_para_limpieza);
+      const na = Number.isFinite(da) ? da : Number.MAX_SAFE_INTEGER;
+      const nb = Number.isFinite(db) ? db : Number.MAX_SAFE_INTEGER;
+      if (na !== nb) return na - nb;
+      return String(a.fecha_creacion_s3 || "").localeCompare(
+        String(b.fecha_creacion_s3 || ""),
+      );
+    });
+    const minDias = sorted.reduce((min, item) => {
+      const n = Number(item.dias_para_limpieza);
+      return Number.isFinite(n) ? Math.min(min, n) : min;
+    }, Number.MAX_SAFE_INTEGER);
+    return { proyecto, versions: sorted, minDias };
+  });
+
+  if (sortMode === "proximity") {
+    groupList.sort(
+      (a, b) => a.minDias - b.minDias || a.proyecto.localeCompare(b.proyecto),
+    );
+  } else {
+    groupList.sort((a, b) => a.proyecto.localeCompare(b.proyecto));
+  }
+
+  const rows = groupList
+    .map(({ proyecto, versions }) =>
+      versions
+        .map((b, idx) => {
+          const projectCell =
+            idx === 0
+              ? `<td class="project-cell" rowspan="${versions.length}">${escHtml(proyecto)}</td>`
+              : "";
+          const rowClass = idx === 0 ? ' class="project-start"' : "";
+          return `<tr${rowClass}>${projectCell}<td title="${escAttr(b.s3_path)}">${escHtml(b.filename || b.s3_path)}</td><td>${escHtml(b.fecha_creacion_s3 || "—")}</td><td>${escHtml(formatRemaining(b.dias_para_limpieza))}</td></tr>`;
+        })
+        .join(""),
+    )
+    .join("");
+
+  return `<div class="table-wrap"><table class="table" aria-label="Bundles próximos al periodo de limpieza">
+      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versión</th><th scope="col">Fecha</th><th scope="col">Faltan</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 /* =====================================================================
@@ -473,14 +700,23 @@ function printStamp(text) {
 
 window.triggerAuthorize = async function () {
   if (window.AppState.busy) return;
-  if (!confirm("¿Está seguro de autorizar la eliminación en S3?")) return;
   hideError();
+
+  const payload = window.AppState.getUnionBundles();
+  if (payload.length === 0) {
+    showError("No hay bundles para autorizar");
+    return;
+  }
+  const toDelete = payload.filter((b) => b.estado === "Descartado").length;
+  const confirmed = await window.confirmAction({
+    title: "Autorizar eliminación en S3",
+    message: `¿Está seguro de autorizar la eliminación en S3? Se eliminarán ${toDelete} bundle(s) marcados para eliminar y se actualizará el histórico.`,
+    confirmLabel: "Autorizar",
+    cancelLabel: "Cancelar",
+  });
+  if (!confirmed) return;
+
   try {
-    const payload = window.AppState.getUnionBundles();
-    if (payload.length === 0) {
-      showError("No hay bundles para autorizar");
-      return;
-    }
     setBusy(true);
     const url = apiUrl(API.authorize);
     const response = await fetchWithTimeout(
@@ -573,6 +809,18 @@ document.addEventListener("click", (e) => {
   }
 });
 
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.classList.contains("select-all-check")) {
+    window.AppState.setAllActive(
+      e.target.checked ? "Descartado" : "Conservado",
+    );
+    const next = document.querySelector(
+      "#main-content-container .select-all-check",
+    );
+    if (next) next.focus();
+  }
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   tickClock();
   setInterval(tickClock, 1000);
@@ -583,6 +831,15 @@ document.addEventListener("DOMContentLoaded", () => {
     retryBtn.addEventListener("click", () => {
       hideError();
       window.AppState.fetchScanBundles();
+    });
+  }
+
+  const recentSortBtn = document.getElementById("recent-sort-btn");
+  if (recentSortBtn) {
+    recentSortBtn.addEventListener("click", () => {
+      const app = window.AppState;
+      app.recentSort = app.recentSort === "proximity" ? "project" : "proximity";
+      renderRecentSection();
     });
   }
 

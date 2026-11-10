@@ -1431,8 +1431,8 @@
           <div>
             <h1 class="wordmark">
               Banamex<span class="wordmark-sub"
-                >Gestión y Automatización de Eliminación de Bundles Dataiku en
-                S3</span
+                >Gestión y Automatización de Eliminación de Bundles (Backups)
+                Dataiku en S3</span
               >
             </h1>
           </div>
@@ -1460,6 +1460,51 @@
           Reintentar
         </button>
       </div>
+
+      <article class="slip" id="guide-slip" aria-labelledby="guide-title">
+        <header class="slip-head">
+          <div class="guide-heading">
+            <h2 class="slip-title" id="guide-title">¿Cómo funciona?</h2>
+            <p class="guide-subtitle">
+              Guía rápida: Gestiona y autoriza la eliminación de backups de
+              proyectos Dataiku (bundles) almacenados en S3
+            </p>
+          </div>
+          <p class="slip-ref">guía</p>
+        </header>
+        <div class="guide-grid">
+          <section class="state-block">
+            <h3 class="field-label">1 · Versionamiento</h3>
+            <p class="state-sub">
+              Bundles (backups) de S3 con antigüedad mayor al criterio vigente
+              (<span id="guide-criterio">&gt; 6 meses</span>), agrupados por
+              proyecto. La versión más reciente se marca
+              <strong>Conservar</strong>; las anteriores,
+              <strong>Eliminar</strong>. Ajústalo por fila o con el check del
+              encabezado.
+            </p>
+          </section>
+          <section class="state-block">
+            <h3 class="field-label">2 · Histórico</h3>
+            <p class="state-sub">
+              Metadata de los bundles conservados (ruta, proyecto, fechas y
+              tamaño). Al autorizar, lo marcado como
+              <strong>Conservar</strong> se registra aquí y se preserva en S3
+              ante futuras limpiezas; lo marcado como
+              <strong>Eliminar</strong> se retira.
+            </p>
+          </section>
+          <section class="state-block">
+            <h3 class="field-label">3 · Autorizar</h3>
+            <p class="state-sub">
+              Elimina de S3 lo marcado como <strong>Eliminar</strong> y actualiza
+              el histórico: <strong>Conservar</strong> se registra y
+              <strong>Eliminar</strong> se retira. Descarga un CSV como
+              evidencia.
+            </p>
+          </section>
+        </div>
+      </article>
 
       <div id="main-content-container" aria-live="polite"></div>
 
@@ -1532,9 +1577,49 @@
           </div>
         </div>
         <footer class="slip-foot">
-          <span>Autorizar elimina Descartado en S3 y actualiza histórico</span>
+          <span>Autorizar elimina en S3 los bundles marcados para eliminar y actualiza el histórico</span>
           <span>BN-A</span>
         </footer>
+      </article>
+
+      <article class="slip" id="recent-slip" aria-labelledby="recent-title">
+        <details class="recent-details">
+          <summary class="recent-summary">
+            <span class="recent-summary-main">
+              <span class="slip-title" id="recent-title">
+                Bundles próximos al periodo de limpieza
+              </span>
+              <span class="recent-summary-sub">
+                Ventana 0–6 meses · solo consulta
+              </span>
+            </span>
+            <span class="recent-summary-meta" id="recent-count">—</span>
+          </summary>
+          <div class="recent-body">
+            <div class="recent-toolbar">
+              <span class="field-label" style="margin: 0" id="recent-context">—</span>
+              <button
+                class="btn btn-secondary btn-highlight"
+                type="button"
+                id="recent-sort-btn"
+              >
+                Ordenar por proximidad
+              </button>
+            </div>
+            <p class="recent-note">
+              Bundles (backups) que aún no alcanzan la antigüedad mínima para
+              eliminarse. Aquí son solo consulta: no tienen estatus, no se
+              modifican y no se incluyen en las métricas ni en Autorizar.
+            </p>
+            <p class="recent-note">
+              La columna «Faltan» indica los días restantes para entrar al
+              periodo de limpieza; al cumplirse, el bundle aparecerá en
+              Versionamiento, donde podrás marcarlo Conservar o Eliminar. Usa el
+              botón para ordenar por proyecto o por proximidad.
+            </p>
+            <div id="recent-content"></div>
+          </div>
+        </details>
       </article>
     </main>
 
@@ -1547,12 +1632,48 @@
       "
     >
       <p class="masthead-sub" style="margin: 0">
-        Gestión y Automatización de Eliminación de Bundles Dataiku en S3
+        Gestión y Automatización de Eliminación de Bundles (Backups) Dataiku en
+        S3
       </p>
       <p class="masthead-meta">
         Bundles: antigüedad &gt; 6 meses · dataset histórico
       </p>
     </footer>
+
+    <div class="confirm" id="confirm-modal" hidden>
+      <div
+        class="confirm-backdrop"
+        data-modal-cancel
+        aria-hidden="true"
+      ></div>
+      <div
+        class="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+        aria-describedby="confirm-modal-text"
+      >
+        <div class="confirm-head">
+          <span class="confirm-mark" aria-hidden="true">!</span>
+          <div>
+            <p class="confirm-kicker">Autorización</p>
+            <h2 class="confirm-title" id="confirm-modal-title">
+              Confirmar acción
+            </h2>
+          </div>
+        </div>
+        <p class="confirm-text" id="confirm-modal-text">¿Deseas continuar?</p>
+        <div class="confirm-actions">
+          <button class="btn btn-secondary" type="button" data-modal-cancel>
+            Cancelar
+          </button>
+          <button class="btn btn-danger" type="button" data-modal-confirm>
+            Autorizar
+          </button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

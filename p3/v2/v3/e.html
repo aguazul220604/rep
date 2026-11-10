@@ -83,6 +83,13 @@
 <#assign fDisplay = "'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif">
 <#assign fMono    = "'JetBrains Mono', Consolas, 'Courier New', Courier, monospace">
 
+<#-- The scenario variables set by Scenario().set_scenario_variables() reach the
+     Freemarker body as Python-repr strings, i.e. wrapped in double quotes
+     (the Subject field uses the formula engine, which does not quote them).
+     Strip those quotes here so the URL is a valid href. `!""` keeps the
+     template from failing if the variable is ever missing. -->
+<#assign webappUrl = (webapp_url!"")?replace('"', '')?trim>
+
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -1575,7 +1582,7 @@
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${cRule};">
       <tr><td style="border-left:3px solid ${cAzulDig}; background-color:${cPaperIn}; padding:12px 16px; font-family:${fDisplay}; font-size:14px; line-height:1.7; color:${cAzul};">
-        Por medio del presente correo se le notifica sobre la próxima ejecución de eliminación de <strong>bundles Dataiku con backup en S3</strong>.
+        Por medio del presente correo se le notifica sobre la próxima gestión de eliminación de <strong>bundles Dataiku con backup en S3</strong>.
       </td></tr>
     </table>
 
@@ -1583,19 +1590,20 @@
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${cRule};">
       <tr><td style="border-left:3px solid ${cRuleStr}; background-color:${cPaper}; padding:12px 16px; font-family:${fDisplay}; font-size:13px; line-height:1.7; color:${cAzul};">
-        <span style="font-family:${fMono}; font-size:10px; font-weight:700; letter-spacing:1.4px; color:${cAzulClaro};">NOTA&nbsp;&nbsp;</span>Por favor revise la documentación o el proceso si requiere conservar algún bundle específico.
+        <span style="font-family:${fMono}; font-size:10px; font-weight:700; letter-spacing:1.4px; color:${cAzulClaro};">NOTA&nbsp;&nbsp;</span>En caso de tener dudas acerca del funcionamiento de la aplicación, revisar las instrucciones detalladas al acceder al enlace.
       </td></tr>
     </table>
 
     <!-- — §9 · CTA — the one action, rojo like the stamp pad ————————— -->
     <div style="height:24px; font-size:24px; line-height:24px;">&nbsp;</div>
 
-    <!-- PEGAR AQUÍ EL ENLACE DEL SITIO: sustituir el href="#" por la URL. -->
+    <!-- El destino sale de §1: <#assign webappUrl>, ya sin las comillas que
+         añade set_scenario_variables(). -->
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" width="100%">
       <tr><td align="center">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr><td bgcolor="${cRojoDeep}" style="background-color:${cRojoDeep};">
-            <a href="#" style="display:block; padding:12px 26px; color:${cBlanco}; font-family:${fMono}; font-size:11px; font-weight:700; letter-spacing:1.6px; text-decoration:none; text-align:center;">ACCEDER A LA GESTIÓN Y AUTOMATIZACIÓN&nbsp;&nbsp;&#8594;</a>
+            <a href="${webappUrl?html}" style="display:block; padding:12px 26px; color:${cBlanco}; font-family:${fMono}; font-size:11px; font-weight:700; letter-spacing:1.6px; text-decoration:none; text-align:center;">ACCEDER A LA GESTIÓN Y AUTOMATIZACIÓN&nbsp;&nbsp;&#8594;</a>
           </td></tr>
         </table>
       </td></tr>

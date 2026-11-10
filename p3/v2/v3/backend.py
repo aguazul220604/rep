@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import io
+import math
 import os
 import re
 import socket
@@ -182,6 +183,20 @@ def historical_matches_server(row, server):
     if server.get("flow") == "NEW":
         return meta.get("nickname") == server.get("nickname")
     return True
+
+
+def _coerce_creation_date(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def is_bundle_path(path, flow=None, is_folder_bundle=False):
@@ -411,11 +426,36 @@ def _bundle_record(meta, s3_path, creation_date, size_bytes, server, filename=No
     }
 
 
+def _recent_record(meta, s3_path, creation_date, server, filename=None):
+    flow = meta.get("flow")
+    env = "UAT" if flow == "NEW" else "PROD"
+    nickname = meta.get("nickname") if flow == "NEW" else server.get("hostname")
+    now = datetime.now()
+    days_left = math.ceil(
+        (creation_date + timedelta(days=DEFAULT_CUTOFF_DAYS) - now).total_seconds()
+        / 86400.0
+    )
+    days_left = max(0, min(DEFAULT_CUTOFF_DAYS, days_left))
+    return {
+        "id": md5_of_path(s3_path),
+        "s3_path": s3_path,
+        "flow": flow,
+        "env": env,
+        "nickname": nickname,
+        "proyecto": meta["proyecto"],
+        "filename": filename or meta.get("filename", ""),
+        "fecha_creacion_s3": creation_date.strftime("%Y-%m-%d %H:%M:%S"),
+        "dias_para_limpieza": days_left,
+    }
+
+
 def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warnings=None):
     bundles = []
+    recent_bundles = []
     folder_bundles_map = {}
     is_prod = server.get("flow") == "LEGACY"
     skipped_no_date = 0
+    now = datetime.now()
 
     for path in paths:
         meta = parse_s3_path(path)
@@ -462,6 +502,9 @@ def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warni
         bundle_label = meta.get("bundle_name") or meta.get("filename", "")
         name_date = extract_date_from_name(bundle_label)
         if name_date is not None and name_date >= cutoff_date:
+            recent_bundles.append(
+                _recent_record(meta, path, min(name_date, now), server)
+            )
             continue
 
         last_modified_ms = 0
@@ -488,14 +531,27 @@ def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warni
             bundles.append(
                 _bundle_record(meta, path, creation_date, file_size_bytes, server)
             )
+        else:
+            recent_bundles.append(
+                _recent_record(meta, path, min(creation_date, now), server)
+            )
 
     for b_path, info in folder_bundles_map.items():
         meta = info["meta"]
         bundle_name = meta.get("bundle_name") or meta.get("filename", "")
 
-        # Igual que con los archivos: descartar por nombre antes de consultar.
+        # Igual que con los archivos: clasificar por nombre antes de consultar.
         name_date = extract_date_from_name(bundle_name)
         if name_date is not None and name_date >= cutoff_date:
+            recent_bundles.append(
+                _recent_record(
+                    meta,
+                    b_path,
+                    min(name_date, now),
+                    server,
+                    filename=bundle_name,
+                )
+            )
             continue
 
         creation_date, total_size_bytes = get_folder_bundle_details(
@@ -517,19 +573,30 @@ def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warni
                     filename=bundle_name,
                 )
             )
+        else:
+            recent_bundles.append(
+                _recent_record(
+                    meta,
+                    b_path,
+                    min(creation_date, now),
+                    server,
+                    filename=bundle_name,
+                )
+            )
 
     if warnings is not None and skipped_no_date > 0:
         warnings.append(
             f"{skipped_no_date} bundle(s) del folder {S3_FOLDER_NAME} se omitieron por no poder determinar su fecha"
         )
 
-    return bundles
+    return bundles, recent_bundles
 
 
 def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None):
     # Escanea el único managed folder del servidor actual.
     cutoff_date = get_six_months_ago(cutoff_days)
     bundles = []
+    recent_bundles = []
     warnings = []
     budget = ScanBudget()
     server = server or detect_current_server()
@@ -545,18 +612,16 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None):
         paths = folder.list_paths_in_partition()
     except Exception as e:
         warnings.append(f"No se pudo acceder al folder {S3_FOLDER_NAME}: {e}")
-        return bundles, warnings, server
+        return bundles, recent_bundles, warnings, server
 
     try:
-        bundles.extend(
-            _fetch_folder_bundles(
-                folder,
-                paths,
-                cutoff_date,
-                server,
-                budget=budget,
-                warnings=warnings,
-            )
+        bundles, recent_bundles = _fetch_folder_bundles(
+            folder,
+            paths,
+            cutoff_date,
+            server,
+            budget=budget,
+            warnings=warnings,
         )
     except Exception as e:
         warnings.append(f"Error al procesar el folder {S3_FOLDER_NAME}: {e}")
@@ -581,7 +646,7 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None):
             f"El escaneo superó {SCAN_TIME_BUDGET_S:.0f}s; los resultados pueden ser parciales."
         )
 
-    return bundles, warnings, server
+    return bundles, recent_bundles, warnings, server
 
 
 # ==========================================
@@ -619,7 +684,7 @@ def save_historical_records(records):
 def api_scan_bundles():
     cutoff_days = get_cutoff_days_from_request()
     server = detect_current_server()
-    s3_bundles, warnings, server = fetch_s3_bundles(
+    s3_bundles, recent_bundles, warnings, server = fetch_s3_bundles(
         cutoff_days=cutoff_days, server=server
     )
     historical = get_historical_records()
@@ -631,6 +696,14 @@ def api_scan_bundles():
     candidates = [
         b for b in s3_bundles if str(b["s3_path"]).rstrip("/") not in historical_paths
     ]
+    recent_visible = [
+        b
+        for b in recent_bundles
+        if str(b["s3_path"]).rstrip("/") not in historical_paths
+    ]
+    recent_visible.sort(
+        key=lambda x: (x.get("dias_para_limpieza", 0), x.get("fecha_creacion_s3", ""))
+    )
 
     # Agrupar por (FLOW, AMBIENTE, NICKNAME, PROYECTO)
     groups = {}
@@ -665,6 +738,11 @@ def api_scan_bundles():
     return jsonify({
         "status": "success",
         "bundles": final_bundles,
+        "recent_bundles": recent_visible,
+        "recent_window": {
+            "dias": cutoff_days,
+            "hasta": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
         "warnings": warnings,
         "server": server,
         "periodo_ejecucion": datetime.now().strftime("%b %Y"),
@@ -767,6 +845,30 @@ def api_authorize_cleanup():
             "paths": [str(p) for p in invalid_paths[:20]],
         }), 400
 
+    # Candado de política: no eliminar bundles con menos de 180 días.
+    cutoff_date = datetime.now() - timedelta(days=DEFAULT_CUTOFF_DAYS)
+    too_recent = []
+    for b in items:
+        if b.get("estado") != "Descartado":
+            continue
+        creation_date = _coerce_creation_date(b.get("fecha_creacion_s3"))
+        if creation_date is None:
+            creation_date = extract_date_from_name(b.get("filename", ""))
+        if creation_date is None:
+            creation_date = extract_date_from_name(b.get("s3_path", ""))
+        if creation_date is None or creation_date >= cutoff_date:
+            too_recent.append(b.get("s3_path"))
+    if too_recent:
+        return jsonify({
+            "status": "error",
+            "message": (
+                "No se pueden eliminar bundles con menos de "
+                f"{DEFAULT_CUTOFF_DAYS} días de antigüedad"
+            ),
+            "server": server,
+            "paths": [str(p) for p in too_recent[:20]],
+        }), 400
+
     current_period = datetime.now().strftime("%Y-%m-%d")
     folder = dataiku.Folder(S3_FOLDER_NAME)
 
@@ -839,7 +941,7 @@ def api_authorize_cleanup():
 def api_global_report():
     cutoff_days = get_cutoff_days_from_request()
     server = detect_current_server()
-    s3_bundles, warnings, server = fetch_s3_bundles(
+    s3_bundles, _recent_bundles, warnings, server = fetch_s3_bundles(
         cutoff_days=cutoff_days, server=server
     )
     if warnings:

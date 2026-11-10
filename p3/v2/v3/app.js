@@ -189,11 +189,11 @@ window.AppState = {
   currentSection: "CLEANUP",
   isLoading: false,
   busy: false,
-  preloaderText: "Leyendo inventario y dataset histórico…",
+  preloaderText: "Consultando S3 y dataset histórico…",
 
   async init() {
     this.isLoading = true;
-    this.preloaderText = "Leyendo inventario y dataset histórico…";
+    this.preloaderText = "Consultando S3 y dataset histórico…";
     this.renderPreloader();
     await this.fetchScanBundles();
   },
@@ -225,26 +225,29 @@ window.AppState = {
     return [...map.values()];
   },
 
-  getCutoffQuery() {
+  getCutoffQuery({ refresh = false } = {}) {
+    const params = new URLSearchParams();
     try {
-      const params = new URLSearchParams(window.location.search || "");
-      const raw = params.get("cutoff_days");
+      const current = new URLSearchParams(window.location.search || "");
+      const raw = current.get("cutoff_days");
       if (raw !== null && raw !== "" && !Number.isNaN(Number(raw))) {
-        return `?cutoff_days=${encodeURIComponent(raw)}`;
+        params.set("cutoff_days", raw);
       }
     } catch (_) {}
-    return "";
+    if (refresh) params.set("refresh", "1");
+    const query = params.toString();
+    return query ? `?${query}` : "";
   },
 
-  async fetchScanBundles() {
+  async fetchScanBundles({ refresh = false } = {}) {
     this.isLoading = true;
-    this.preloaderText = "Leyendo inventario y dataset histórico…";
+    this.preloaderText = "Consultando S3 y dataset histórico…";
     hideError();
     this.renderPreloader();
     this.renderCurrentView();
     renderRecentSection();
     try {
-      const url = apiUrl(API.scan + this.getCutoffQuery());
+      const url = apiUrl(API.scan + this.getCutoffQuery({ refresh }));
       const response = await fetchWithTimeout(url, {}, 90000);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
@@ -272,7 +275,7 @@ window.AppState = {
       console.error("Error al obtener /scan-bundles:", error);
       if (isAbortError(error)) {
         showError(
-          "El escaneo de S3 tardó más de 90 segundos. Vuelve a intentarlo.",
+          "El escaneo de S3 superó el tiempo de espera. Vuelve a intentarlo; el siguiente intento puede usar caché.",
           true,
         );
       } else {
@@ -419,7 +422,7 @@ window.AppState.renderCurrentView = function () {
     host.innerHTML = `<article class="slip" aria-label="Cargando">
       <header class="slip-head"><h2 class="slip-title">Cargando información</h2><p class="slip-ref">S3 · histórico</p></header>
       <div class="skeleton is-tall"></div><div class="skeleton"></div><div class="skeleton is-short"></div>
-      <footer class="slip-foot"><span>Leyendo inventario y dataset histórico</span><span>…</span></footer>
+      <footer class="slip-foot"><span>Consultando S3 y dataset histórico</span><span>…</span></footer>
     </article>`;
     return;
   }
@@ -591,10 +594,11 @@ function renderRecentSection() {
   const server = app.server || {};
 
   if (contextEl) {
-    const inventoryAsOf = server.last_scan
-      ? ` · Inventario: ${server.last_scan}`
+    const scanAsOf = server.last_scan
+      ? ` · Escaneo S3: ${server.last_scan}`
       : "";
-    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}${inventoryAsOf}`;
+    const cacheLabel = server.cache_hit ? " · caché" : "";
+    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}${scanAsOf}${cacheLabel}`;
   }
   if (sortBtn) {
     sortBtn.textContent =
@@ -753,7 +757,7 @@ window.triggerAuthorize = async function () {
       `Limpieza ejecutada · ${payload.length} bundles · CSV descargado`;
     printStamp(`Banamex · ${window.AppState.periodoEjecucion}`);
     window.AppState.historicBundles = [];
-    await window.AppState.fetchScanBundles();
+    await window.AppState.fetchScanBundles({ refresh: true });
   } catch (error) {
     console.error("Error en authorize:", error);
     showError("Error al procesar la autorización");
@@ -834,7 +838,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (retryBtn) {
     retryBtn.addEventListener("click", () => {
       hideError();
-      window.AppState.fetchScanBundles();
+      window.AppState.fetchScanBundles({ refresh: true });
     });
   }
 

@@ -627,6 +627,20 @@ body.confirm-open {
   box-shadow: inset 0 1px 0 var(--ink);
 }
 
+/* Tabla de bundles próximos: mismo tono claro que Versionamiento/Histórico,
+   con el nombre del proyecto en rojo */
+#recent-slip .table th,
+#recent-slip .table td {
+  color: var(--ink) !important;
+}
+#recent-slip .table thead th {
+  color: var(--ink) !important;
+}
+#recent-slip .table .project-cell {
+  color: var(--signal) !important;
+  font-weight: 700;
+}
+
 .stamp-slot {
   position: relative;
   min-height: 132px;

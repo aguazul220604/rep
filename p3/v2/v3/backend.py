@@ -1,16 +1,13 @@
 import csv
-import hashlib
 import io
-import math
 import os
-import re
-import socket
 import time
-from collections import deque
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file
 import dataiku
 import pandas as pd
+
+import bundles_scan as bs
 
 # ==========================================
 # CONFIGURACIÓN Y CONSTANTES
@@ -19,26 +16,11 @@ import pandas as pd
 #   - Servidores del flujo nuevo (UAT): bucket dataiku-files-2
 #   - Servidores legacy (PROD):         bucket dataiku-files
 # La detección del servidor decide cómo interpretar las rutas del folder.
-S3_FOLDER_NAME = "S3_Bundle_Backup_Path"
-
-# Servidores del flujo nuevo. Todas sus rutas (UAT o PROD-1) se muestran como UAT.
-# hostname-substring -> nickname usado para filtrar las rutas de S3.
-NEW_FLOW_SERVER_MAP = {
-    "sd-7u15-eilw": "DKUF",
-    "sd-mn7t-ccgf": "RISP",
-    "sd-yslj-ri55": "SEGP",
-    "sd-9r2x-8twu": "BUAU",
-    "sd-fkub-coxa": "DKUU",
-    "sd-2edj-g004": "RISU",
-    "sd-4c64-tuzr": "SEGU",
-    "sd-zqo7-s06c": "DKUD",
-}
-
-# Servidores legacy. La ruta no identifica servidor; se usa el hostname local.
-LEGACY_SERVER_MAP = {
-    "sd-90d4-afu8": "sd-90d4-afu8",
-    "sd-xt24-jvpi": "sd-xt24-jvpi",
-}
+S3_FOLDER_NAME = bs.S3_FOLDER_NAME
+INVENTORY_DATASET_NAME = bs.INVENTORY_DATASET_NAME
+INVENTORY_STALE_HOURS = float(
+    os.environ.get("INVENTORY_STALE_HOURS", str(24 * 95))
+)
 
 HISTORICAL_DATASET_NAME = "historical"
 HISTORICAL_COLUMNS = [
@@ -46,42 +28,7 @@ HISTORICAL_COLUMNS = [
     "fecha_creacion_s3", "fecha_periodo_limpieza", "size",
 ]
 VALID_ESTADOS = ("Conservado", "Descartado")
-DEFAULT_CUTOFF_DAYS = 180
-NEW_FLOW_EXTENSIONS = (".zip", ".gz", ".tar.gz", ".tgz")
-PROJECT_BUNDLES_SEGMENT = "project_bundles"
-FALLBACK_NEW_FLOW_ENVS = ("UAT", "PROD-1", "PROD", "LAB", "DEV", "QA", "DESIGN")
-
-# Límites del escaneo on-request (solo API de Dataiku). El listado de S3 puede
-# traer miles de rutas internas de cada bundle (.git/objects, etc.); para no
-# colgar el request se acotan las llamadas de detalle y el tiempo total.
-SIZE_SAMPLE_PER_BUNDLE = int(os.environ.get("BUNDLE_SIZE_SAMPLE", "5"))
-SCAN_MAX_DETAIL_CALLS = int(os.environ.get("SCAN_MAX_DETAIL_CALLS", "300"))
-SCAN_TIME_BUDGET_S = float(os.environ.get("SCAN_TIME_BUDGET_S", "60"))
-
-BUNDLE_DATE_REGEX = re.compile(
-    r"(\d{4})-(\d{2})-(\d{2})(?:[-_](\d{2})-(\d{2})-(\d{2}))?"
-)
-
-
-class ScanBudget:
-    """Presupuesto compartido por request para llamadas caras a S3."""
-
-    def __init__(self, max_calls=None, time_budget_s=None):
-        self.max_calls = SCAN_MAX_DETAIL_CALLS if max_calls is None else max_calls
-        self.time_budget_s = (
-            SCAN_TIME_BUDGET_S if time_budget_s is None else time_budget_s
-        )
-        self.calls = 0
-        self.deadline = time.monotonic() + max(0.0, self.time_budget_s)
-
-    def can_call(self):
-        return self.calls < self.max_calls and time.monotonic() < self.deadline
-
-    def consume(self):
-        self.calls += 1
-
-    def out_of_time(self):
-        return time.monotonic() >= self.deadline
+DEFAULT_CUTOFF_DAYS = bs.DEFAULT_CUTOFF_DAYS
 
 
 def get_six_months_ago(cutoff_days=DEFAULT_CUTOFF_DAYS):
@@ -105,59 +52,7 @@ def get_cutoff_days_from_request():
 
 
 def detect_current_server(hostname=None):
-    """
-    Resuelve el contexto de ejecución a partir del hostname local.
-
-    Replica el orden de s3.py: primero legacy, luego flujo nuevo y, si no hay
-    coincidencia (o falla la detección), cae a PROD (flujo LEGACY).
-
-    Retorna:
-        {
-            "hostname": str,      # nombre exacto del servidor (se muestra en UI)
-            "flow": "NEW"|"LEGACY",
-            "environment": "UAT"|"PROD",
-            "nickname": str,      # interno: filtra rutas NEW; informativo en PROD
-            "known": bool,
-        }
-    """
-    if hostname is None:
-        try:
-            hostname = socket.gethostname()
-        except Exception:
-            hostname = "unknown"
-
-    host = (hostname or "unknown").lower()
-
-    # 1. Legacy tiene prioridad (igual que s3.py)
-    for ident, display_name in LEGACY_SERVER_MAP.items():
-        if ident.lower() in host:
-            return {
-                "hostname": host,
-                "flow": "LEGACY",
-                "environment": "PROD",
-                "nickname": display_name or host,
-                "known": True,
-            }
-
-    # 2. Flujo nuevo: UAT y PROD-1 se presentan como UAT
-    for ident, nickname in NEW_FLOW_SERVER_MAP.items():
-        if ident.lower() in host:
-            return {
-                "hostname": host,
-                "flow": "NEW",
-                "environment": "UAT",
-                "nickname": nickname,
-                "known": True,
-            }
-
-    # 3. Desconocido o fallo de detección -> PROD (flujo LEGACY)
-    return {
-        "hostname": host,
-        "flow": "LEGACY",
-        "environment": "PROD",
-        "nickname": host,
-        "known": False,
-    }
+    return bs.detect_current_server(hostname)
 
 
 def path_belongs_to_server(path, server):
@@ -199,453 +94,105 @@ def _coerce_creation_date(value):
     return None
 
 
-def is_bundle_path(path, flow=None, is_folder_bundle=False):
-    if not path:
-        return False
-    if is_folder_bundle:
-        return True
-    if flow == "NEW":
-        return path.lower().endswith(NEW_FLOW_EXTENSIONS)
-    if flow == "LEGACY":
-        clean = path.lstrip("/").rstrip("/")
-        return "/" in clean and not clean.endswith("/")
-    lowered = path.lower()
-    if lowered.endswith(NEW_FLOW_EXTENSIONS):
-        return True
-    clean = path.lstrip("/").rstrip("/")
-    return "/" in clean and not clean.endswith("/")
-
-
 def md5_of_path(s3_path):
-    # hash MD5 de la ruta S3 (estable entre reinicios)
-    return hashlib.md5(s3_path.encode("utf-8")).hexdigest()
+    return bs.md5_of_path(s3_path)
 
 
 def extract_date_from_name(name):
-    """
-    Intenta extraer la fecha de creación embebida en el nombre del bundle
-    (ej. V_1_1_0_CHG0000377490-2025-06-30-23-12-23 o PerfAdminTest-2024-07-09-00-37-32).
-    Retorna datetime o None si no contiene un patrón válido.
-    """
-    if not name:
-        return None
-    matches = list(BUNDLE_DATE_REGEX.finditer(name))
-    if not matches:
-        return None
-    m = matches[-1]
-    try:
-        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        hour = int(m.group(4)) if m.group(4) is not None else 0
-        minute = int(m.group(5)) if m.group(5) is not None else 0
-        second = int(m.group(6)) if m.group(6) is not None else 0
-        return datetime(year, month, day, hour, minute, second)
-    except ValueError:
-        return None
+    return bs.extract_date_from_name(name)
 
 
 # ==========================================
 # FUNCIONES HELPER
 # ==========================================
 def parse_s3_path(path):
-    """
-    Parsear rutas de S3 y devolver un esquema homogéneo.
-    Acepta tanto rutas con prefijo dataiku/ como sin él.
+    return bs.parse_s3_path(path)
 
-    NEW (LAB):     [dataiku/]{AMBIENTE}/{NICKNAME}/{PROYECTO}/{ARCHIVO}
-    LEGACY (PROD): [dataiku/]{PROYECTO}/project_bundles/{BUNDLE}[/...]
-    LEGACY fallback: [dataiku/]{PROYECTO}/...
-    """
-    if not path:
+
+def _inventory_source():
+    return (os.environ.get("INVENTORY_SOURCE") or "dataset").strip().lower()
+
+
+def _stale_warning(scan_ts):
+    if not scan_ts:
         return None
-
-    raw_path = path
-    clean_path = path.lstrip("/").rstrip("/")
-    if not clean_path:
+    try:
+        ts = datetime.strptime(str(scan_ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
         return None
-
-    parts = clean_path.split("/")
-    has_dataiku_prefix = parts[0].lower() == "dataiku"
-    offset = 1 if has_dataiku_prefix else 0
-    normalized = parts[offset:]
-
-    if not normalized:
+    age_hours = (datetime.now() - ts).total_seconds() / 3600.0
+    if age_hours <= INVENTORY_STALE_HOURS:
         return None
-
-    # 1. LEGACY (PROD): [dataiku/]{PROYECTO}/project_bundles/{BUNDLE}[/...]
-    if len(normalized) >= 3 and normalized[1] == PROJECT_BUNDLES_SEGMENT:
-        project = normalized[0]
-        bundle_name = normalized[2]
-        bundle_path = "/" + "/".join(parts[: offset + 3])
-        is_folder_bundle = (
-            len(normalized) > 3
-            or not bundle_name.lower().endswith(NEW_FLOW_EXTENSIONS)
-        )
-        return {
-            "flow": "LEGACY",
-            "env": "PROD",
-            "nickname": "LEGACY",
-            "proyecto": project,
-            "filename": bundle_name,
-            "bundle_name": bundle_name,
-            "bundle_path": bundle_path,
-            "is_folder_bundle": is_folder_bundle,
-            "in_project_bundles": True,
-        }
-
-    # 2. NEW (LAB): [dataiku/]{AMBIENTE}/{NICKNAME}/{PROYECTO}/{ARCHIVO}
-    if (
-        len(normalized) >= 4
-        and normalized[0].upper() in FALLBACK_NEW_FLOW_ENVS
-        and normalized[-1].lower().endswith(NEW_FLOW_EXTENSIONS)
-    ):
-        return {
-            "flow": "NEW",
-            "env": normalized[0],
-            "nickname": normalized[1],
-            "proyecto": normalized[2],
-            "filename": "/".join(normalized[3:]),
-            "bundle_name": normalized[-1],
-            "bundle_path": "/" + clean_path,
-            "is_folder_bundle": False,
-            "in_project_bundles": False,
-        }
-
-    # Contenedores de project_bundles no son bundles
-    if normalized[-1] == PROJECT_BUNDLES_SEGMENT:
-        return None
-
-    # Carpetas de ambiente NEW sin archivo de bundle no son bundles
-    if normalized[0].upper() in FALLBACK_NEW_FLOW_ENVS:
-        return None
-
-    # 3. LEGACY fallback (PROD): [dataiku/]{PROYECTO}/...
-    if len(normalized) >= 2:
-        return {
-            "flow": "LEGACY",
-            "env": "PROD",
-            "nickname": "LEGACY",
-            "proyecto": normalized[0],
-            "filename": "/".join(normalized[1:]),
-            "bundle_name": normalized[-1],
-            "bundle_path": "/" + clean_path,
-            "is_folder_bundle": raw_path.rstrip("/") != raw_path,
-            "in_project_bundles": False,
-        }
-
-    return None
-
-
-def get_folder_bundle_details(folder, bundle_path, info, bundle_name, budget=None):
-    """
-    Obtiene (creation_date, tamaño_bytes_aprox) de un bundle-carpeta.
-
-    Usa la fecha embebida en el nombre del bundle (rápido). El tamaño de un
-    prefijo S3 no es fiable (suele reportar 0), así que se estima a partir de
-    una muestra acotada de archivos hijos y se extrapola por el número total de
-    hijos. Todas las llamadas caras pasan por `budget`.
-    """
-    creation_date = extract_date_from_name(bundle_name)
-    last_modified_ms = 0
-    total_size_bytes = 0
-
-    info = info or {}
-    child_count = info.get("child_count", 0) or 0
-    sample_paths = []
-    seen = set()
-    for p in list(info.get("sample_first", [])) + list(info.get("sample_last", [])):
-        if p not in seen:
-            seen.add(p)
-            sample_paths.append(p)
-
-    # Una sola consulta al prefijo del bundle. Normalmente devuelve el
-    # lastModified y, si DSS lo calcula, el tamaño.
-    if budget is None or budget.can_call():
-        try:
-            if budget is not None:
-                budget.consume()
-            details = folder.get_path_details(bundle_path) or {}
-            if isinstance(details, dict):
-                last_modified_ms = details.get("lastModified", 0) or 0
-                total_size_bytes = details.get("size", 0) or 0
-                if total_size_bytes == 0 and isinstance(details.get("children"), list):
-                    total_size_bytes = sum(
-                        (c.get("size", 0) or 0)
-                        for c in details["children"]
-                        if isinstance(c, dict)
-                    )
-        except Exception:
-            pass
-
-    # Si no hay tamaño real, estimar con una muestra acotada de hijos.
-    if total_size_bytes == 0 and sample_paths:
-        sampled_size = 0
-        sampled_n = 0
-        for cp in sample_paths:
-            if budget is not None and not budget.can_call():
-                break
-            try:
-                if budget is not None:
-                    budget.consume()
-                c_details = folder.get_path_details(cp) or {}
-                if isinstance(c_details, dict):
-                    c_mod = c_details.get("lastModified", 0) or 0
-                    if c_mod > last_modified_ms:
-                        last_modified_ms = c_mod
-                    sampled_size += c_details.get("size", 0) or 0
-                    sampled_n += 1
-            except Exception:
-                continue
-        if sampled_n > 0:
-            avg_size = sampled_size / sampled_n
-            total_size_bytes = int(avg_size * max(child_count, sampled_n))
-
-    if creation_date is None:
-        if last_modified_ms > 0:
-            creation_date = datetime.fromtimestamp(last_modified_ms / 1000.0)
-        else:
-            creation_date = None
-
-    return creation_date, total_size_bytes
-
-
-def _bundle_record(meta, s3_path, creation_date, size_bytes, server, filename=None):
-    flow = meta.get("flow")
-    env = "UAT" if flow == "NEW" else "PROD"
-    nickname = meta.get("nickname") if flow == "NEW" else server.get("hostname")
-    return {
-        "id": md5_of_path(s3_path),
-        "s3_path": s3_path,
-        "flow": flow,
-        "env": env,
-        "nickname": nickname,
-        "proyecto": meta["proyecto"],
-        "filename": filename or meta.get("filename", ""),
-        "fecha_creacion_s3": creation_date.strftime("%Y-%m-%d %H:%M:%S"),
-        "size": round(size_bytes / (1024 * 1024), 2),
-        "source_folder": S3_FOLDER_NAME,
-    }
-
-
-def _recent_record(meta, s3_path, creation_date, server, filename=None):
-    flow = meta.get("flow")
-    env = "UAT" if flow == "NEW" else "PROD"
-    nickname = meta.get("nickname") if flow == "NEW" else server.get("hostname")
-    now = datetime.now()
-    days_left = math.ceil(
-        (creation_date + timedelta(days=DEFAULT_CUTOFF_DAYS) - now).total_seconds()
-        / 86400.0
+    return (
+        f"El inventario {INVENTORY_DATASET_NAME} tiene {age_hours:.0f} h de antigüedad "
+        f"(último escaneo: {scan_ts})."
     )
-    days_left = max(0, min(DEFAULT_CUTOFF_DAYS, days_left))
-    return {
-        "id": md5_of_path(s3_path),
-        "s3_path": s3_path,
-        "flow": flow,
-        "env": env,
-        "nickname": nickname,
-        "proyecto": meta["proyecto"],
-        "filename": filename or meta.get("filename", ""),
-        "fecha_creacion_s3": creation_date.strftime("%Y-%m-%d %H:%M:%S"),
-        "dias_para_limpieza": days_left,
-    }
-
-
-def _fetch_folder_bundles(folder, paths, cutoff_date, server, budget=None, warnings=None):
-    bundles = []
-    recent_bundles = []
-    folder_bundles_map = {}
-    is_prod = server.get("flow") == "LEGACY"
-    skipped_no_date = 0
-    now = datetime.now()
-
-    for path in paths:
-        meta = parse_s3_path(path)
-        if not meta:
-            continue
-
-        # Solo se procesan rutas del flujo detectado para este servidor.
-        if meta.get("flow") != server.get("flow"):
-            continue
-
-        # En PROD solo interesan los bundles bajo <PROYECTO>/project_bundles/.
-        # Se ignora cualquier ruido raíz (sandboxes, .gz/.tar sueltos, etc.).
-        if is_prod and not meta.get("in_project_bundles"):
-            continue
-
-        # En UAT solo se muestran los bundles del servidor actual.
-        if not is_prod and meta.get("nickname") != server.get("nickname"):
-            continue
-
-        is_folder_bundle = bool(meta.get("is_folder_bundle"))
-        if not is_bundle_path(path, flow=meta.get("flow"), is_folder_bundle=is_folder_bundle):
-            continue
-
-        if is_folder_bundle:
-            b_path = meta["bundle_path"]
-            info = folder_bundles_map.get(b_path)
-            if info is None:
-                info = {
-                    "meta": meta,
-                    "child_count": 0,
-                    # Muestra acotada: primeros y últimos hijos, sin retener
-                    # todo el árbol (.git/objects) en memoria.
-                    "sample_first": deque(maxlen=SIZE_SAMPLE_PER_BUNDLE),
-                    "sample_last": deque(maxlen=SIZE_SAMPLE_PER_BUNDLE),
-                }
-                folder_bundles_map[b_path] = info
-            info["child_count"] += 1
-            info["sample_first"].append(path)
-            info["sample_last"].append(path)
-            continue
-
-        # Bundle-archivo. Si el nombre ya trae fecha y no es candidato, se
-        # evita cualquier llamada a S3.
-        bundle_label = meta.get("bundle_name") or meta.get("filename", "")
-        name_date = extract_date_from_name(bundle_label)
-        if name_date is not None and name_date >= cutoff_date:
-            recent_bundles.append(
-                _recent_record(meta, path, min(name_date, now), server)
-            )
-            continue
-
-        last_modified_ms = 0
-        file_size_bytes = 0
-        if budget is None or budget.can_call():
-            try:
-                if budget is not None:
-                    budget.consume()
-                details = folder.get_path_details(path) or {}
-                last_modified_ms = details.get("lastModified", 0) or 0
-                file_size_bytes = details.get("size", 0) or 0
-            except Exception:
-                pass
-
-        creation_date = name_date
-        if last_modified_ms > 0:
-            creation_date = datetime.fromtimestamp(last_modified_ms / 1000.0)
-
-        if creation_date is None:
-            skipped_no_date += 1
-            continue
-
-        if creation_date < cutoff_date:
-            bundles.append(
-                _bundle_record(meta, path, creation_date, file_size_bytes, server)
-            )
-        else:
-            recent_bundles.append(
-                _recent_record(meta, path, min(creation_date, now), server)
-            )
-
-    for b_path, info in folder_bundles_map.items():
-        meta = info["meta"]
-        bundle_name = meta.get("bundle_name") or meta.get("filename", "")
-
-        # Igual que con los archivos: clasificar por nombre antes de consultar.
-        name_date = extract_date_from_name(bundle_name)
-        if name_date is not None and name_date >= cutoff_date:
-            recent_bundles.append(
-                _recent_record(
-                    meta,
-                    b_path,
-                    min(name_date, now),
-                    server,
-                    filename=bundle_name,
-                )
-            )
-            continue
-
-        creation_date, total_size_bytes = get_folder_bundle_details(
-            folder, b_path, info, bundle_name, budget=budget
-        )
-
-        if creation_date is None:
-            skipped_no_date += 1
-            continue
-
-        if creation_date < cutoff_date:
-            bundles.append(
-                _bundle_record(
-                    meta,
-                    b_path,
-                    creation_date,
-                    total_size_bytes,
-                    server,
-                    filename=bundle_name,
-                )
-            )
-        else:
-            recent_bundles.append(
-                _recent_record(
-                    meta,
-                    b_path,
-                    min(creation_date, now),
-                    server,
-                    filename=bundle_name,
-                )
-            )
-
-    if warnings is not None and skipped_no_date > 0:
-        warnings.append(
-            f"{skipped_no_date} bundle(s) del folder {S3_FOLDER_NAME} se omitieron por no poder determinar su fecha"
-        )
-
-    return bundles, recent_bundles
 
 
 def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None):
-    # Escanea el único managed folder del servidor actual.
     cutoff_date = get_six_months_ago(cutoff_days)
-    bundles = []
-    recent_bundles = []
+    server = dict(server or detect_current_server())
     warnings = []
-    budget = ScanBudget()
-    server = server or detect_current_server()
+    rows = None
+    scan_ts = None
 
     if not server.get("known"):
         warnings.append(
             f"Servidor no identificado ('{server.get('hostname')}'); se asume PROD."
         )
 
-    started = time.monotonic()
-    try:
-        folder = dataiku.Folder(S3_FOLDER_NAME)
-        paths = folder.list_paths_in_partition()
-    except Exception as e:
-        warnings.append(f"No se pudo acceder al folder {S3_FOLDER_NAME}: {e}")
-        return bundles, recent_bundles, warnings, server
+    source = _inventory_source()
 
-    try:
-        bundles, recent_bundles = _fetch_folder_bundles(
-            folder,
-            paths,
-            cutoff_date,
-            server,
-            budget=budget,
-            warnings=warnings,
-        )
-    except Exception as e:
-        warnings.append(f"Error al procesar el folder {S3_FOLDER_NAME}: {e}")
+    if source != "s3":
+        try:
+            rows = bs.load_inventory(INVENTORY_DATASET_NAME)
+        except Exception as e:
+            warnings.append(
+                f"No se pudo leer {INVENTORY_DATASET_NAME}: {e}. Se usa escaneo en vivo."
+            )
+            rows = None
 
-    elapsed = time.monotonic() - started
-    try:
-        print(
-            f"[scan-bundles] folder={S3_FOLDER_NAME} flow={server.get('flow')} "
-            f"host={server.get('hostname')} paths={len(paths)} elapsed={elapsed:.1f}s "
-            f"detail_calls={budget.calls}/{budget.max_calls}"
-        )
-    except Exception:
-        pass
+    if rows is not None:
+        if not rows:
+            warnings.append(
+                f"El inventario {INVENTORY_DATASET_NAME} está vacío; ejecute el scenario de escaneo."
+            )
+        scan_ts = bs.latest_scan_ts(rows, server)
+    else:
+        started = time.monotonic()
+        try:
+            folder = dataiku.Folder(S3_FOLDER_NAME)
+            budget = bs.ScanBudget()
+            rows, scan_warnings = bs.collect_bundles(folder, server, budget=budget)
+            warnings.extend(scan_warnings)
+            scan_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            warnings.append(f"No se pudo acceder al folder {S3_FOLDER_NAME}: {e}")
+            rows = []
+        else:
+            elapsed = time.monotonic() - started
+            try:
+                print(
+                    f"[scan-bundles] source=s3 folder={S3_FOLDER_NAME} "
+                    f"flow={server.get('flow')} host={server.get('hostname')} "
+                    f"rows={len(rows)} elapsed={elapsed:.1f}s"
+                )
+            except Exception:
+                pass
 
-    if budget.calls >= budget.max_calls:
+    bundles, recent_bundles, skipped = bs.split_inventory(rows, cutoff_date, server)
+    if skipped > 0:
         warnings.append(
-            f"Se alcanzó el límite de {budget.max_calls} consultas de detalle; "
-            "algunos tamaños son estimados u omitidos."
-        )
-    if budget.out_of_time():
-        warnings.append(
-            f"El escaneo superó {SCAN_TIME_BUDGET_S:.0f}s; los resultados pueden ser parciales."
+            f"{skipped} bundle(s) del folder {S3_FOLDER_NAME} se omitieron por no poder determinar su fecha"
         )
 
+    stale = _stale_warning(scan_ts)
+    if stale:
+        warnings.append(stale)
+
+    server["last_scan"] = scan_ts or ""
+    server["inventory_source"] = "s3" if source == "s3" else "dataset"
+    server["inventory_rows"] = len(rows or [])
     return bundles, recent_bundles, warnings, server
 
 
@@ -909,6 +456,18 @@ def api_authorize_cleanup():
             "size": b.get("size", b.get("size_mb", 0)),
         }
     save_historical_records([merged[k] for k in sorted(merged)])
+
+    if _inventory_source() != "s3":
+        removed_paths = {
+            str(b["s3_path"]).rstrip("/")
+            for b in to_delete
+            if b.get("Estado") == "Eliminado"
+        }
+        removed_paths.update(str(b["s3_path"]).rstrip("/") for b in to_preserve)
+        try:
+            bs.trim_inventory(removed_paths, INVENTORY_DATASET_NAME)
+        except Exception as e:
+            print(f"A No se pudo sincronizar {INVENTORY_DATASET_NAME}: {e}")
 
     # CSV del periodo
     output = io.StringIO()

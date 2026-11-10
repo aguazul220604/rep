@@ -182,17 +182,18 @@ window.AppState = {
     environment: "—",
     flow: "NEW",
     known: true,
+    last_scan: "",
   },
   recentBundles: [],
   recentSort: "project",
   currentSection: "CLEANUP",
   isLoading: false,
   busy: false,
-  preloaderText: "Leyendo S3 y dataset histórico…",
+  preloaderText: "Leyendo inventario y dataset histórico…",
 
   async init() {
     this.isLoading = true;
-    this.preloaderText = "Leyendo S3 y dataset histórico…";
+    this.preloaderText = "Leyendo inventario y dataset histórico…";
     this.renderPreloader();
     await this.fetchScanBundles();
   },
@@ -237,7 +238,7 @@ window.AppState = {
 
   async fetchScanBundles() {
     this.isLoading = true;
-    this.preloaderText = "Leyendo S3 y dataset histórico…";
+    this.preloaderText = "Leyendo inventario y dataset histórico…";
     hideError();
     this.renderPreloader();
     this.renderCurrentView();
@@ -302,7 +303,7 @@ window.AppState = {
       const data = await response.json();
       if (data.status === "success") {
         this.historicBundles = data.bundles || [];
-        if (data.server) this.server = data.server;
+        if (data.server) this.server = { ...this.server, ...data.server };
       } else {
         showError("Error al obtener histórico: respuesta inválida del backend");
       }
@@ -418,7 +419,7 @@ window.AppState.renderCurrentView = function () {
     host.innerHTML = `<article class="slip" aria-label="Cargando">
       <header class="slip-head"><h2 class="slip-title">Cargando información</h2><p class="slip-ref">S3 · histórico</p></header>
       <div class="skeleton is-tall"></div><div class="skeleton"></div><div class="skeleton is-short"></div>
-      <footer class="slip-foot"><span>Leyendo S3 y dataset histórico</span><span>…</span></footer>
+      <footer class="slip-foot"><span>Leyendo inventario y dataset histórico</span><span>…</span></footer>
     </article>`;
     return;
   }
@@ -590,7 +591,10 @@ function renderRecentSection() {
   const server = app.server || {};
 
   if (contextEl) {
-    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}`;
+    const inventoryAsOf = server.last_scan
+      ? ` · Inventario: ${server.last_scan}`
+      : "";
+    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}${inventoryAsOf}`;
   }
   if (sortBtn) {
     sortBtn.textContent =

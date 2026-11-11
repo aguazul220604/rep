@@ -6,8 +6,9 @@ import re
 import sys
 import threading
 import traceback
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yaml
@@ -43,7 +44,7 @@ try:
         DEFAULT_MODEL_FILENAME,
         DataikuManagedFolderProvider,
     )
-    from pii_engine.core.name_models import NameModelPredictor
+    from pii_engine.core.name_models import NameModelPredictor, match_rule_entity
     from pii_engine.core.schema import OTRO_PII
     from pii_engine.recognizers.registry import DEFAULT_CONFIG_DIR
     _ENGINE_IMPORT_ERROR = None
@@ -53,6 +54,7 @@ except Exception as _exc_engine:
     DEFAULT_MODEL_FILENAME = "model.pkl"
     DataikuManagedFolderProvider = None
     NameModelPredictor = None
+    match_rule_entity = None
     OTRO_PII = "otro_pii"
     DEFAULT_CONFIG_DIR = None
     _ENGINE_IMPORT_ERROR = f"{type(_exc_engine).__name__}: {_exc_engine}"
@@ -99,9 +101,6 @@ except ValueError as _exc_upload:
 app.config["MAX_CONTENT_LENGTH"] = (
     None if _MAX_UPLOAD_MB is None else _MAX_UPLOAD_MB * 1024 * 1024
 )
-
-MANUAL_DEFAULT_LABEL = "Nombres manuales"
-_MANUAL_SPLIT = re.compile(r"[\r\n,;\t]+")
 
 _predictor: Optional[Any] = None
 _predictor_lock = threading.Lock()
@@ -294,13 +293,6 @@ def _normalize_column_names(raw_names: List[Any]) -> List[str]:
     return names
 
 
-def _parse_manual_names(text: Any) -> List[str]:
-    if text is None:
-        return []
-    parts = _MANUAL_SPLIT.split(str(text))
-    return _normalize_column_names(parts)
-
-
 INFORMATION_CLASSIFICATION_VERSION = "1.0"
 
 INFORMATION_CLASSIFICATION_LABELS = {
@@ -373,6 +365,7 @@ ENTITY_TO_INFORMATION_CLASSIFICATION = {
 CLASSIFICATION_REVIEW_ENTITIES = {"empresa", "contrato"}
 
 _ORIGIN_MAP = {"rules": "rule", "model": "model", "both": "both"}
+WEBAPP_RESCUE_CONFIDENCE = 0.85
 
 
 def _classify_information(
@@ -416,14 +409,49 @@ def _classify_information(
     }
 
 
+def _rescue_rule_prediction(prediction: Any) -> Tuple[Any, bool]:
+    if getattr(prediction, "is_pii_name", False):
+        return prediction, False
+
+    rule_entity = getattr(prediction, "rule_entity", None)
+    if rule_entity is None and match_rule_entity is not None:
+        try:
+            rule_entity = match_rule_entity(prediction.column)
+        except Exception:
+            rule_entity = None
+
+    if not rule_entity or rule_entity == OTRO_PII:
+        return prediction, False
+
+    try:
+        rescued = replace(
+            prediction,
+            is_pii_name=True,
+            score_name=max(
+                float(prediction.score_name or 0.0),
+                WEBAPP_RESCUE_CONFIDENCE,
+            ),
+            expected_entity=rule_entity,
+            prob_entity_name=WEBAPP_RESCUE_CONFIDENCE,
+            entity_top1=prediction.entity_top1 or rule_entity,
+            abstained=False,
+            source="rules",
+        )
+    except Exception:
+        return prediction, False
+
+    return rescued, True
+
+
 def _prediction_to_row(
     prediction: Any,
     source_file: str,
     model_version: str,
+    force_review: bool = False,
 ) -> Dict[str, Any]:
     is_pii = bool(prediction.is_pii_name)
     entity = prediction.expected_entity if is_pii else None
-    needs_review = bool(
+    needs_review = force_review or bool(
         is_pii
         and (
             prediction.abstained
@@ -448,7 +476,14 @@ def _prediction_to_row(
         "model_version": model_version,
         "classification_version": INFORMATION_CLASSIFICATION_VERSION,
     }
-    row.update(_classify_information(is_pii, entity, needs_review))
+    classification = _classify_information(
+        is_pii,
+        entity,
+        needs_review and not force_review,
+    )
+    if force_review:
+        classification["classification_review"] = True
+    row.update(classification)
     return row
 
 
@@ -466,7 +501,15 @@ def _analyze_names(
         prediction = predictions.get(name)
         if prediction is None:
             continue
-        rows.append(_prediction_to_row(prediction, source_file, model_version))
+        prediction, rescued = _rescue_rule_prediction(prediction)
+        rows.append(
+            _prediction_to_row(
+                prediction,
+                source_file,
+                model_version,
+                force_review=rescued,
+            )
+        )
     return rows
 
 
@@ -513,15 +556,9 @@ def process_table():
         )
 
     files = [f for f in request.files.getlist("file") if f and f.filename]
-    manual_text = request.form.get("names", "")
-    manual_label = (request.form.get("names_label") or "").strip()
-    if not manual_label:
-        manual_label = MANUAL_DEFAULT_LABEL
-
-    manual_names = _parse_manual_names(manual_text)
-    if not files and not manual_names:
+    if not files:
         return _error(
-            "Sube al menos un archivo o pega nombres de columna para analizar.",
+            "Sube al menos un archivo para analizar.",
             400,
         )
 
@@ -561,18 +598,6 @@ def process_table():
             logger.exception("Error al analizar nombres de '%s'", file.filename)
             warnings.append(
                 f"No se pudo analizar '{file.filename}': "
-                f"{type(exc).__name__}: {exc}"
-            )
-
-    if manual_names:
-        try:
-            rows.extend(
-                _analyze_names(manual_names, manual_label, predictor, model_version)
-            )
-        except Exception as exc:
-            logger.exception("Error al analizar nombres manuales")
-            warnings.append(
-                f"No se pudieron analizar los nombres manuales: "
                 f"{type(exc).__name__}: {exc}"
             )
 

@@ -1422,7 +1422,7 @@
     <main class="page">
       <article class="slip" aria-labelledby="t-carga">
         <header class="slip-head">
-          <h2 class="slip-title" id="t-carga">Cargar archivos o nombres</h2>
+          <h2 class="slip-title" id="t-carga">Cargar archivos</h2>
           <p class="slip-ref">PII 01</p>
         </header>
         <form id="pii-form" novalidate>
@@ -1455,28 +1455,6 @@
                 Limpiar
               </button>
             </div>
-          </div>
-          <div class="field manual-names" id="field-manual">
-            <label class="field-label" for="manualNames"
-              >Nombres de columna (opcional)</label
-            >
-            <textarea
-              class="textarea mono"
-              id="manualNames"
-              rows="4"
-              placeholder="correo_electronico&#10;curp&#10;nombre_cliente"
-            ></textarea>
-            <input
-              class="input mono"
-              id="namesLabel"
-              type="text"
-              autocomplete="off"
-              placeholder="Etiqueta del conjunto (opcional)"
-            />
-            <span class="field-note"
-              >Uno por línea o separados por coma. Se combinan con los
-              archivos; solo se analizan los nombres, nunca el contenido.</span
-            >
           </div>
           <div class="alert alert-error" id="uploadError" hidden>
             <span class="alert-mark" aria-hidden="true">!</span

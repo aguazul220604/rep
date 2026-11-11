@@ -589,10 +589,6 @@ function clearAll() {
   state.entity = "";
   state.classification = "";
   $("#in-filter").value = "";
-  const manual = $("#manualNames");
-  if (manual) manual.value = "";
-  const label = $("#namesLabel");
-  if (label) label.value = "";
   setChecked("#in-only-pii", false);
   setChecked("#in-only-review", false);
   $("#in-entity").value = "";
@@ -614,12 +610,8 @@ async function onSubmit(e) {
   $("#upload-result").textContent = "";
   const input = $("#datasetFile");
   const files = input.files ? Array.from(input.files) : [];
-  const manualEl = $("#manualNames");
-  const manualText = manualEl ? manualEl.value.trim() : "";
-  if (!files.length && !manualText) {
-    showAlert(
-      "Selecciona uno o más archivos CSV/Excel o pega nombres de columna.",
-    );
+  if (!files.length) {
+    showAlert("Selecciona uno o más archivos CSV/Excel.");
     input.focus();
     return;
   }
@@ -632,12 +624,6 @@ async function onSubmit(e) {
   }
   const fd = new FormData();
   files.forEach((f) => fd.append("file", f));
-  if (manualText) {
-    fd.append("names", manualText);
-    const labelEl = $("#namesLabel");
-    const label = labelEl ? labelEl.value.trim() : "";
-    if (label) fd.append("names_label", label);
-  }
   setBusy(true);
   try {
     const data = await apiProcess(fd);

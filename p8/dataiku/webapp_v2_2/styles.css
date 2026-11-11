@@ -1690,16 +1690,6 @@ body.is-busy {
 .upload-side .btn {
   width: 100%;
 }
-.manual-names {
-  margin-top: var(--s3);
-}
-.manual-names .textarea {
-  min-height: 96px;
-  resize: vertical;
-}
-.manual-names .input {
-  margin-top: var(--s2);
-}
 .file-list {
   list-style: none;
   margin: var(--s2) 0 0;

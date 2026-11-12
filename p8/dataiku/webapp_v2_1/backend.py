@@ -217,14 +217,14 @@ def _error(message: str, status: int = 400):
 def _request_entity_too_large(_exc):
     if _MAX_UPLOAD_MB is None:
         message = (
-            "El archivo es demasiado grande para el servidor o el reverse proxy. "
-            "Contacta al administrador para aumentar el límite de carga "
-            "(client_max_body_size)."
+            "El archivo es demasiado grande para el servidor o el proxy inverso. "
+            "Se recomienda contactar al administrador para aumentar el límite "
+            "de carga (client_max_body_size)."
         )
     else:
         message = (
             f"El archivo supera el límite de {_MAX_UPLOAD_MB} MB. "
-            "Reduce el tamaño o ajusta PII_MAX_UPLOAD_MB."
+            "Es necesario reducir el tamaño o ajustar PII_MAX_UPLOAD_MB."
         )
     return _error(message, 413)
 
@@ -282,7 +282,8 @@ def _read_uploaded_file(
             raise ValueError(f"'{filename}' está vacío.") from exc
 
     raise ValueError(
-        f"Formato no soportado para '{filename}'. Sube archivos .csv o .xlsx."
+        f"Formato no compatible con '{filename}'. "
+        "Se admiten archivos .csv o .xlsx."
     )
 
 
@@ -488,7 +489,7 @@ def process_table():
 
     files = request.files.getlist("file")
     if not files:
-        return _error("No se subió ningún archivo.", 400)
+        return _error("No se recibió ningún archivo.", 400)
 
     try:
         sample_size = _parse_sample_size(request.form.get("sample_size"))
@@ -572,7 +573,6 @@ EXPORT_XLSX_HEADER = ["Archivo", "Nombre de Columna", "Prediccion",
                       "Entidad", "Probabilidad Entidad (%)", "Muestra",
                       "Clasificación", "Grupo",
                       "Revisión clasificación"]
-_EXPORT_COL_COUNT = len(EXPORT_XLSX_HEADER)
 
 
 def _safe_xlsx_filename(name):
@@ -588,12 +588,21 @@ def export_xlsx():
         if Workbook is None:
             return jsonify({
                 "status": "error",
-                "message": f"openpyxl no disponible: {_XLSX_ERROR}. Usa CSV.",
+                "message": f"openpyxl no disponible: {_XLSX_ERROR}. "
+                "Se sugiere utilizar el formato CSV.",
             }), 500
         payload = request.get_json(force=True, silent=True) or {}
         rows = payload.get("rows") or []
         if not isinstance(rows, list) or not rows:
-            return jsonify({"status": "error", "message": "Sin filas para exportar."}), 400
+            return jsonify(
+                {"status": "error", "message": "No hay filas para exportar."}
+            ), 400
+
+        header = payload.get("header")
+        if not isinstance(header, list) or not header:
+            header = EXPORT_XLSX_HEADER
+        header = [str(h) for h in header][:50]
+        col_count = len(header)
 
         wb = Workbook()
         ws = wb.active
@@ -601,23 +610,24 @@ def export_xlsx():
         ws.freeze_panes = "A2"
         head_fill = PatternFill("solid", fgColor="003746")
         head_font = Font(bold=True, color="FFFFFF")
-        ws.append(EXPORT_XLSX_HEADER)
+        ws.append(header)
         for cell in ws[1]:
             cell.fill = head_fill
             cell.font = head_font
             cell.alignment = Alignment(vertical="center")
         for r in rows:
-            vals = list(r)[:_EXPORT_COL_COUNT]
-            vals += [""] * max(0, _EXPORT_COL_COUNT - len(vals))
+            vals = list(r)[:col_count]
+            vals += [""] * max(0, col_count - len(vals))
             out = []
             for idx, v in enumerate(vals):
-                if idx in (3, 7) and v not in (None, ""):
+                label = header[idx]
+                if label in ("Probabilidad PII (%)", "Probabilidad Entidad (%)") and v not in (None, ""):
                     try:
                         out.append(float(v))
                         continue
                     except (TypeError, ValueError):
                         pass
-                if idx == 8 and v not in (None, ""):
+                if label == "Muestra" and v not in (None, ""):
                     try:
                         out.append(int(float(v)))
                         continue
@@ -628,10 +638,12 @@ def export_xlsx():
         for col in ws.columns:
             width = max((len(str(c.value or "")) for c in col), default=10)
             ws.column_dimensions[col[0].column_letter].width = min(width + 2, 48)
-        for row in ws.iter_rows(min_row=2, min_col=4, max_col=8):
-            for cell in row:
-                if isinstance(cell.value, float):
-                    cell.number_format = '0.00'
+        for idx, label in enumerate(header, start=1):
+            if label in ("Probabilidad PII (%)", "Probabilidad Entidad (%)"):
+                for row in ws.iter_rows(min_row=2, min_col=idx, max_col=idx):
+                    for cell in row:
+                        if isinstance(cell.value, float):
+                            cell.number_format = '0.00'
         ws.auto_filter.ref = ws.dimensions
 
         buf = io.BytesIO()

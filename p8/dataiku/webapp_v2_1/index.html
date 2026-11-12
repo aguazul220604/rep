@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Banamex</title>
     <link rel="icon" href="/public/vendor/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    />
     <link rel="stylesheet" href="/public/vendor/banamex.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -1421,16 +1427,171 @@
       </header>
     </div>
     <main class="page">
+      <article class="slip" id="article-howto" aria-labelledby="t-como">
+        <details class="slip-details" id="howtoDetails">
+          <summary class="slip-head slip-summary">
+            <h2 class="slip-title" id="t-como">Funcionalidad</h2>
+            <span class="slip-subtitle">
+              Guía de referencia: análisis de detección e identificación de
+              datos PII
+            </span>
+            <span class="slip-head-side">
+              <span class="slip-ref">Referencia</span>
+              <svg
+                class="slip-chevron"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 6l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </summary>
+          <div class="howto-grid">
+          <div class="howto-main">
+            <p class="howto-intro">
+              Esta solución permite detectar e identificar datos de información
+              personal (PII) en los archivos cargados y propone una clasificación
+              de la información para apoyar su revisión y gobierno. El análisis
+              combina el nombre de cada columna con una muestra de sus valores.
+            </p>
+            <ol class="howto-steps">
+              <li>
+                <strong>Carga de archivos</strong>: permite cargar uno o más
+                archivos CSV o Excel y analizar varias tablas en una misma
+                ejecución.
+              </li>
+              <li>
+                <strong>Análisis</strong>: examina el nombre de la columna y una
+                muestra de su contenido para detectar patrones y valores
+                característicos.
+              </li>
+              <li>
+                <strong>Predicción PII</strong>: determina si la columna contiene
+                datos de información personal y el nivel de confianza asociado.
+              </li>
+              <li>
+                <strong>Entidad y clasificación</strong>: identifica el tipo de
+                dato (por ejemplo, nombre, RFC o tarjeta) y recomienda el nivel de
+                información: público, interno, confidencial, sensible o
+                restringido.
+              </li>
+              <li>
+                <strong>Revisión y descarga</strong>: señala las columnas que
+                requieren validación humana y permite descargar los resultados por
+                tabla o el reporte global en formato CSV o Excel.
+              </li>
+            </ol>
+            <div class="howto-audit">
+              <label class="choice howto-audit-choice">
+                <input type="checkbox" id="in-show-audit" />
+                <span>Mostrar detalles de auditoría</span>
+              </label>
+              <p class="field-note">
+                De forma predeterminada, los resultados muestran únicamente las
+                columnas esenciales para revisión: Columna, Predicción PII,
+                Entidad, Clasificación y Revisión. Al habilitar esta opción, las
+                tablas y las descargas CSV o Excel incorporan las probabilidades,
+                la evidencia, la muestra y la marca de revisión de clasificación.
+                Es una vista de apoyo para validar las decisiones del modelo o
+                atender revisiones de auditoría; no modifica el análisis ni la
+                clasificación obtenida.
+              </p>
+            </div>
+          </div>
+          <aside
+            class="howto-side"
+            id="interpretabilidad"
+            aria-labelledby="t-interp"
+          >
+            <h3 class="howto-side-title" id="t-interp">Interpretabilidad</h3>
+            <p class="howto-side-mode">
+              <span class="is-basic-only">Vista básica</span>
+              <span class="is-audit-only">Vista con detalles de auditoría</span>
+            </p>
+            <table class="interp-table" aria-labelledby="t-interp">
+              <tbody>
+                <tr>
+                  <th scope="row">Columna</th>
+                  <td>Nombre de la columna analizada.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Predicción PII</th>
+                  <td>
+                    Resultado del modelo: indica si la columna contiene datos de
+                    información personal.
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Entidad</th>
+                  <td>
+                    Tipo de dato PII detectado (por ejemplo, nombre, RFC o
+                    tarjeta).
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Clasificación</th>
+                  <td>
+                    Nivel de información recomendado a partir de la entidad
+                    detectada.
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Revisión</th>
+                  <td>
+                    Señala las columnas de baja confianza o sin contenido que
+                    requieren validación humana.
+                  </td>
+                </tr>
+                <tr class="is-audit-only">
+                  <th scope="row">Prob. PII</th>
+                  <td>Confianza del modelo de que la columna sea PII (0–100%).</td>
+                </tr>
+                <tr class="is-audit-only">
+                  <th scope="row">Prob. entidad</th>
+                  <td>Confianza de la entidad detectada (0–100%).</td>
+                </tr>
+                <tr class="is-audit-only">
+                  <th scope="row">Evidencia</th>
+                  <td>Fuente usada para decidir: nombre, contenido o ambos.</td>
+                </tr>
+                <tr class="is-audit-only">
+                  <th scope="row">Muestra</th>
+                  <td>
+                    Número de valores analizados; 0 indica que no hay contenido.
+                  </td>
+                </tr>
+                <tr class="is-audit-only">
+                  <th scope="row">Revisar (clasificación)</th>
+                  <td>
+                    La clasificación recomendada está sujeta a validación de
+                    Compliance.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </aside>
+        </div>
+        </details>
+      </article>
       <article class="slip" aria-labelledby="t-carga">
         <header class="slip-head">
-          <h2 class="slip-title" id="t-carga">Cargar dataset</h2>
+          <h2 class="slip-title" id="t-carga">Carga del conjunto de datos</h2>
           <p class="slip-ref">PII 01</p>
         </header>
         <form id="pii-form" novalidate>
           <div class="upload-row">
             <div class="field upload-main" id="field-file">
               <label class="field-label" for="datasetFile"
-                >Dataset (.csv, .xlsx, .xls)</label
+                >Conjunto de datos (.csv, .xlsx, .xls)</label
               >
               <label class="file-drop" for="datasetFile"
                 ><span id="fileHint">Ningún archivo seleccionado</span></label
@@ -1444,7 +1605,7 @@
                 hidden
               />
               <span class="field-note" id="note-file"
-                >Se analizan nombres y contenido de columnas</span
+                >Se analizan los nombres y el contenido de las columnas</span
               >
             </div>
             <div class="btn-row upload-side">
@@ -1452,7 +1613,7 @@
                 Analizar PII
               </button>
               <button class="btn btn-secondary" id="btn-clear" type="button">
-                Limpiar
+                Restablecer
               </button>
             </div>
           </div>
@@ -1481,7 +1642,9 @@
             class="field"
             style="max-width: 52ch; flex: 2 1 260px; margin-bottom: 0"
           >
-            <label class="field-label" for="in-filter">Buscar archivo</label>
+            <label class="field-label" for="in-filter"
+              >Filtrar por archivo</label
+            >
             <input
               class="input mono"
               id="in-filter"
@@ -1489,7 +1652,10 @@
               autocomplete="off"
               placeholder="Filtrar por nombre de archivo…"
             />
-            <span class="field-note">Buscador visual por archivo. Vacío = todo.</span>
+            <span class="field-note"
+              >Filtro por nombre de archivo. Si se deja vacío, se muestran
+              todos los archivos.</span
+            >
           </div>
         </div>
         <div
@@ -1527,7 +1693,7 @@
               >
               <label class="choice"
                 ><input type="checkbox" id="in-only-review" />
-                <span>Solo revisión</span></label
+                <span>Solo con revisión</span></label
               >
               <label class="choice"
                 ><input type="checkbox" id="in-only-empty" />
@@ -1536,61 +1702,95 @@
             </div>
           </div>
         </div>
+        <div id="tableFileHead" class="table-file-head" hidden></div>
         <div class="table-wrap" id="tableWrap">
           <table class="table" id="piiTable" aria-label="Resultado por columna">
             <thead>
               <tr>
-                <th scope="col">Archivo</th>
-                <th scope="col">Columna</th>
-                <th scope="col">Predicción</th>
-                <th scope="col">Prob. PII</th>
-                <th scope="col">Evidencia</th>
-                <th scope="col">Revisión</th>
-                <th scope="col">Entidad</th>
-                <th scope="col">Prob. entidad</th>
-                <th scope="col">Clasificación</th>
-                <th scope="col">Muestra</th>
+                <th scope="col" title="Nombre de la columna analizada">
+                  Columna
+                </th>
+                <th
+                  scope="col"
+                  title="Indica si la columna contiene datos de información personal"
+                >
+                  Predicción PII
+                </th>
+                <th scope="col" title="Tipo de dato PII detectado">Entidad</th>
+                <th
+                  scope="col"
+                  title="Nivel de información recomendado según la entidad detectada"
+                >
+                  Clasificación
+                </th>
+                <th
+                  scope="col"
+                  title="Señala columnas de baja confianza o sin contenido que requieren validación"
+                >
+                  Revisión
+                </th>
+                <th
+                  scope="col"
+                  class="col-audit"
+                  title="Confianza del modelo de que la columna sea PII"
+                >
+                  Prob. PII
+                </th>
+                <th
+                  scope="col"
+                  class="col-audit"
+                  title="Confianza de la entidad detectada"
+                >
+                  Prob. entidad
+                </th>
+                <th
+                  scope="col"
+                  class="col-audit"
+                  title="Fuente usada para decidir: nombre, contenido o ambos"
+                >
+                  Evidencia
+                </th>
+                <th
+                  scope="col"
+                  class="col-audit"
+                  title="Número de valores analizados; 0 indica que no hay contenido"
+                >
+                  Muestra
+                </th>
               </tr>
             </thead>
             <tbody id="piiListBody">
               <tr>
-                <td colspan="10">Nada inspeccionado todavía</td>
+                <td colspan="9">Sin información analizada por el momento</td>
               </tr>
             </tbody>
           </table>
         </div>
         <p class="field-note" id="tableLegend">
-          Evidencia: <strong>Nombre</strong> = sin contenido;
-          <strong>Contenido</strong> = por valores;
-          <strong>Nombre + contenido</strong> = ambos. <strong>Revisar</strong>
-          indica baja confianza o falta de contenido. La
-          <strong>Clasificación</strong> es una recomendación derivada de la
-          entidad detectada y puede requerir validación de Compliance.
+          Las definiciones de cada columna se encuentran en
+          <a href="#interpretabilidad">Interpretabilidad</a>, dentro de
+          "Funcionalidad". Para visualizar probabilidades, evidencia y muestra,
+          habilite "Mostrar detalles de auditoría" en dicha sección.
         </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
         <div class="dl-box" id="fileExportRow">
-          <p class="dl-title">Descargar resultados de análisis</p>
+          <p class="dl-title">Descargar resultados del análisis</p>
           <p class="dl-sub mono" id="fileExportName" aria-live="polite"></p>
           <div class="dl-controls">
-            <div class="field" style="flex: 0 1 200px; margin-bottom: 0">
-              <label class="field-label" for="selExportFileFmt"
-                >Formato de descarga</label
-              >
-              <select class="select mono dl-select" id="selExportFileFmt">
-                <option value="csv">CSV (.csv)</option>
-                <option value="xlsx">Excel (.xlsx)</option>
-              </select>
-            </div>
-            <button
-              class="btn btn-primary"
-              id="btnExportFile"
-              type="button"
+            <select
+              class="select mono dl-select dl-trigger"
+              id="selExportFileFmt"
+              aria-label="Seleccionar formato de descarga"
               hidden
             >
-              Descargar
-            </button>
+              <option value="">Descargar…</option>
+              <option value="csv">Descargar CSV (.csv)</option>
+              <option value="xlsx">Descargar Excel (.xlsx)</option>
+            </select>
           </div>
-          <span class="field-note">Los filtros aplican en la descarga</span>
+          <span class="field-note"
+            >Los filtros se aplican a la descarga</span
+          >
         </div>
         <footer class="slip-foot">
           <span
@@ -1606,28 +1806,23 @@
         </header>
         <div class="dl-box">
           <p class="dl-title">
-            Descargar resultados de análisis — todas las tablas
+            Descargar resultados del análisis — todas las tablas
           </p>
           <p class="dl-sub mono" id="reportSummary" aria-live="polite"></p>
           <div class="dl-controls">
-            <div class="field" style="flex: 0 1 200px; margin-bottom: 0">
-              <label class="field-label" for="selReportFmt"
-                >Formato de descarga</label
-              >
-              <select class="select mono dl-select" id="selReportFmt">
-                <option value="csv">CSV (.csv)</option>
-                <option value="xlsx">Excel (.xlsx)</option>
-              </select>
-            </div>
-            <button
-              class="btn btn-primary"
-              id="btnGenerateReport"
-              type="button"
+            <select
+              class="select mono dl-select dl-trigger"
+              id="selReportFmt"
+              aria-label="Seleccionar formato de descarga del reporte global"
             >
-              Descargar reporte global
-            </button>
+              <option value="">Descargar reporte global…</option>
+              <option value="csv">Descargar reporte global en CSV (.csv)</option>
+              <option value="xlsx">
+                Descargar reporte global en Excel (.xlsx)
+              </option>
+            </select>
           </div>
-          <span class="field-note">Abarca todos los archivos</span>
+          <span class="field-note">Incluye todos los archivos</span>
         </div>
         <footer class="slip-foot">
           <span>Reporte PII global</span>
@@ -1640,13 +1835,14 @@
       hidden
       role="status"
       aria-live="polite"
-      aria-label="Analizando dataset"
+      aria-label="Analizando conjunto de datos"
     >
       <div class="loading-panel">
         <span class="loading-spinner" aria-hidden="true"></span>
-        <p class="loading-title">Analizando dataset…</p>
+        <p class="loading-title">Analizando conjunto de datos…</p>
         <p class="loading-sub">
-          Detectando y clasificando datos PII. Esto puede tardar unos segundos.
+          Se están detectando y clasificando datos PII. El proceso puede tardar
+          unos segundos.
         </p>
         <div class="loading-bar" aria-hidden="true"><span></span></div>
       </div>

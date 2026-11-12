@@ -43,6 +43,7 @@ const state = {
   onlyPii: false,
   onlyReview: false,
   onlyEmpty: false,
+  showAudit: false,
   activeFile: ALL,
   entity: "",
   classification: "",
@@ -212,10 +213,10 @@ function renderKPIs() {
     `<div class="kpi"><span class="kpi-label">Columnas</span><span class="kpi-value">${total}</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII crítico</span><span class="kpi-value">${critical}</span></div>` +
-    `<div class="kpi"><span class="kpi-label">Revisión</span><span class="kpi-value">${review}</span></div>` +
+    `<div class="kpi"><span class="kpi-label">Requieren revisión</span><span class="kpi-value">${review}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Sin contenido</span><span class="kpi-value">${empty}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
-    `<div class="kpi"><span class="kpi-label">Top entidad</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
+    `<div class="kpi"><span class="kpi-label">Entidad principal</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
 }
 
 function renderTabs() {
@@ -270,7 +271,7 @@ function renderIndex() {
     (f) => !q || String(f).toLowerCase().includes(q),
   );
   if (!files.length) {
-    el.innerHTML = `<p class="transfer-result mono">Ningún archivo coincide con el filtro global.</p>`;
+    el.innerHTML = `<p class="transfer-result mono">Ningún archivo coincide con los filtros aplicados.</p>`;
     return;
   }
   for (const f of files) {
@@ -307,7 +308,7 @@ function renderFileHead() {
     : "—";
   el.hidden = false;
   el.innerHTML =
-    `<button type="button" class="link-back" data-file="${ALL}">← Todos</button>` +
+    `<button type="button" class="link-back" data-file="${ALL}">← Todos los archivos</button>` +
     `<div><strong>${escapeHtml(s.file)}</strong>` +
     `<span class="file-card-meta"> · ${s.total} cols · ${s.pii} PII (${s.pct}%) · Top: ${escapeHtml(topTxt)}</span></div>` +
     `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>`;
@@ -369,14 +370,23 @@ function renderTable() {
   const wrap = $("#tableWrap");
   const tb = $("#piiListBody");
   const info = $("#pagingInfo");
-  const btnFile = $("#btnExportFile");
+  const selFile = $("#selExportFileFmt");
   const rowFile = $("#fileExportRow");
+  const tableHead = $("#tableFileHead");
+  document.body.classList.toggle("show-audit", state.showAudit);
+  const auditBox = $("#in-show-audit");
+  if (auditBox) auditBox.checked = state.showAudit;
   // En índice Todos no hay tabla, solo cards.
   if (isIndexView()) {
     wrap.hidden = true;
-    btnFile.hidden = true;
+    if (selFile) selFile.hidden = true;
     if (rowFile) rowFile.hidden = true;
-    info.textContent = "Selecciona un archivo para ver su tabla completa.";
+    if (tableHead) {
+      tableHead.hidden = true;
+      tableHead.textContent = "";
+    }
+    info.textContent =
+      "Se requiere seleccionar un archivo para visualizar su tabla completa.";
     return;
   }
   wrap.hidden = false;
@@ -385,18 +395,15 @@ function renderTable() {
   const rows = visibleColumns();
   const inFile = isMulti() && state.activeFile !== ALL;
   const singleFile = !isMulti() && getFiles().length === 1;
-  const showBtn = state.columns.length > 0;
-  const fmt = ($("#selExportFileFmt") || {}).value || "csv";
-  const ext = fmt === "xlsx" ? ".xlsx" : ".csv";
+  const showExport = state.columns.length > 0;
   const nameEl = $("#fileExportName");
-  btnFile.hidden = !showBtn;
-  if (showBtn) {
+  if (selFile) selFile.hidden = !showExport;
+  if (showExport) {
     const label = inFile
       ? state.activeFile
       : singleFile
         ? getFiles()[0]
         : "esta vista";
-    btnFile.textContent = `Descargar ${label} (${ext})`;
     if (nameEl) {
       const total = inFile
         ? fileSummary(state.activeFile).total
@@ -407,20 +414,26 @@ function renderTable() {
     nameEl.textContent = "";
   }
   info.textContent = state.columns.length
-    ? `Mostrando ${rows.length} de ${inFile ? fileSummary(state.activeFile).total : state.columns.length} columnas${state.activeFile !== ALL ? ` en ${state.activeFile}` : ""}.`
+    ? `Se muestran ${rows.length} de ${inFile ? fileSummary(state.activeFile).total : state.columns.length} columnas${state.activeFile !== ALL ? ` en ${state.activeFile}` : ""}.`
     : "";
+  if (tableHead) {
+    const fileLabel = singleFile ? getFiles()[0] : "";
+    tableHead.hidden = !fileLabel;
+    tableHead.innerHTML = fileLabel
+      ? `<span class="table-file-label">Archivo</span> ${escapeHtml(fileLabel)}`
+      : "";
+  }
   if (!rows.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 10;
+    td.colSpan = 9;
     td.textContent = state.columns.length
-      ? "Ninguna columna coincide con el filtro"
-      : "Nada inspeccionado todavía";
+      ? "Ninguna columna coincide con los filtros aplicados"
+      : "Sin información analizada";
     tr.append(td);
     tb.append(tr);
     return;
   }
-  const showFile = state.activeFile === ALL;
   for (const col of rows) {
     const tr = document.createElement("tr");
     if (col.is_pii) tr.classList.add("pii-row");
@@ -432,10 +445,10 @@ function renderTable() {
         ? "—"
         : pctText(col.entity_probability);
     const reviewCell = col.needs_review
-      ? `<span class="status-badge warn" title="Baja confianza o sin contenido; requiere revisión humana">Revisar</span>`
+      ? `<span class="status-badge warn" title="Confianza baja o ausencia de contenido; requiere revisión humana">Revisar</span>`
       : `<span class="muted">—</span>`;
     const sampleCell = isEmptyContent(col)
-      ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó solo en el nombre">Sin contenido</span>`
+      ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó únicamente en el nombre">Sin contenido</span>`
       : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
     const clsKey = String(col.information_classification || "").replace(
       /[^a-z_]/gi,
@@ -448,29 +461,20 @@ function renderTable() {
     const classificationCell =
       clsBadge +
       (col.classification_review
-        ? ` <span class="status-badge warn" title="Clasificación sujeta a revisión">Revisar</span>`
+        ? ` <span class="status-badge warn is-audit-only" title="Clasificación sujeta a revisión">Revisar</span>`
         : "");
     tr.innerHTML =
-      (showFile
-        ? `<td>${escapeHtml(col.source_file || "")}</td>`
-        : `<td class="muted">—</td>`) +
       `<td><strong>${escapeHtml(col.name)}</strong></td>` +
       `<td><span class="status-badge ${col.is_pii ? "danger" : "success"}">${col.is_pii ? "PII" : "NO PII"}</span></td>` +
-      `<td><span class="prob-num">${pctText(col.pii_probability)}</span></td>` +
-      `<td title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
-      `<td>${reviewCell}</td>` +
-      `<td>${escapeHtml(ent)}</td><td>${escapeHtml(entP)}</td>` +
+      `<td>${escapeHtml(ent)}</td>` +
       `<td>${classificationCell}</td>` +
-      `<td>${sampleCell}</td>`;
-    // Oculta la columna Archivo cuando ya se encuentra dentro de un tab de archivo.
+      `<td>${reviewCell}</td>` +
+      `<td class="col-audit"><span class="prob-num">${pctText(col.pii_probability)}</span></td>` +
+      `<td class="col-audit">${escapeHtml(entP)}</td>` +
+      `<td class="col-audit" title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
+      `<td class="col-audit">${sampleCell}</td>`;
     tb.append(tr);
   }
-  // Oculta/muestra la columna Archivo según vista.
-  const thFile = $("#piiTable thead th:first-child");
-  if (thFile) thFile.style.display = showFile ? "" : "none";
-  Array.from(tb.rows).forEach((r) => {
-    if (r.cells[0]) r.cells[0].style.display = showFile ? "" : "none";
-  });
 }
 
 function renderReport() {
@@ -481,13 +485,9 @@ function renderReport() {
   const total = state.columns.length;
   const pii = state.columns.filter((c) => c.is_pii).length;
   const files = getFiles().length;
-  const fmt = ($("#selReportFmt") || {}).value || "csv";
-  const ext = fmt === "xlsx" ? ".xlsx" : ".csv";
   const sum = $("#reportSummary");
   if (sum)
-    sum.textContent = `${files} tablas · ${total} columnas · ${pii} PII → reporte_pii_global${ext}`;
-  const br = $("#btnGenerateReport");
-  if (br) br.textContent = `Descargar reporte global (${ext})`;
+    sum.textContent = `${files} tablas · ${total} columnas · ${pii} PII → reporte_pii_global (CSV o Excel)`;
 }
 
 function renderAll() {
@@ -520,10 +520,6 @@ function setBusy(b) {
   state.busy = b;
   $("#btnProcess").disabled = b;
   $("#btnProcess").textContent = b ? "Analizando…" : "Analizar PII";
-  const bf = $("#btnExportFile");
-  if (bf) bf.disabled = b;
-  const br = $("#btnGenerateReport");
-  if (br) br.disabled = b;
   const sf = $("#selExportFileFmt");
   if (sf) sf.disabled = b;
   const sr = $("#selReportFmt");
@@ -552,7 +548,10 @@ function updateFileHint() {
     if (list) list.textContent = "";
     return;
   }
-  hint.textContent = `${files.length} archivo(s) seleccionado(s)`;
+  hint.textContent =
+    files.length === 1
+      ? "1 archivo seleccionado"
+      : `${files.length} archivos seleccionados`;
   hint.classList.add("has-files");
   if (!list) return;
   list.textContent = "";
@@ -590,12 +589,13 @@ function clearAll() {
   updateFileHint();
   showAlert(null);
   $("#note-file").textContent =
-    "Se analizan nombres y contenido de columnas. Nada sale del servidor.";
+    "Se analizan los nombres y el contenido de las columnas. La información permanece en el servidor.";
   state.columns = [];
   state.filter = "";
   state.onlyPii = false;
   state.onlyReview = false;
   state.onlyEmpty = false;
+  state.showAudit = false;
   state.activeFile = ALL;
   state.entity = "";
   state.classification = "";
@@ -603,12 +603,13 @@ function clearAll() {
   setChecked("#in-only-pii", false);
   setChecked("#in-only-review", false);
   setChecked("#in-only-empty", false);
+  setChecked("#in-show-audit", false);
   $("#in-entity").value = "";
   $("#in-classification").value = "";
   const sf = $("#selExportFileFmt");
-  if (sf) sf.value = "csv";
+  if (sf) sf.value = "";
   const sr = $("#selReportFmt");
-  if (sr) sr.value = "csv";
+  if (sr) sr.value = "";
   $("#upload-result").textContent = "";
   $("#pagingInfo").textContent = "";
   renderAll();
@@ -622,7 +623,7 @@ async function onSubmit(e) {
   $("#upload-result").textContent = "";
   const input = $("#datasetFile");
   if (!input.files || !input.files.length) {
-    showAlert("Por favor, selecciona uno o más archivos CSV o Excel.");
+    showAlert("Se requiere seleccionar al menos un archivo CSV o Excel.");
     input.focus();
     return;
   }
@@ -657,13 +658,13 @@ async function onSubmit(e) {
     const nFiles = getFiles().length;
     $("#upload-result").textContent =
       nFiles > 1
-        ? `${nFiles} archivos · ${state.columns.length} columnas · ${pii} PII. Estás en Todos: elige una tarjeta.`
+        ? `${nFiles} archivos · ${state.columns.length} columnas · ${pii} PII. Seleccione una tarjeta para consultar el detalle.`
         : `${state.columns.length} columnas · ${pii} PII.`;
     const msgs = [];
     if (data.warnings && data.warnings.length) msgs.push(...data.warnings);
     if (nEmpty)
       msgs.push(
-        `${nEmpty} columnas no tienen contenido; su clasificación se basó solo en el nombre y requiere revisión.`,
+        `${nEmpty} columnas no presentan contenido; su clasificación se basó únicamente en el nombre y requiere revisión.`,
       );
     if (msgs.length) showAlert(msgs.join(" | "), "warn");
   } catch (err) {
@@ -683,7 +684,16 @@ function toCsvRow(fields) {
     .join(",");
 }
 
-const EXPORT_HEADER = [
+const EXPORT_HEADER_DEFAULT = [
+  "Archivo",
+  "Nombre de Columna",
+  "Prediccion",
+  "Entidad",
+  "Clasificación",
+  "Requiere revision",
+];
+
+const EXPORT_HEADER_AUDIT = [
   "Archivo",
   "Nombre de Columna",
   "Prediccion",
@@ -698,23 +708,38 @@ const EXPORT_HEADER = [
   "Revisión clasificación",
 ];
 
+function exportHeader() {
+  return state.showAudit ? EXPORT_HEADER_AUDIT : EXPORT_HEADER_DEFAULT;
+}
+
 function buildExportRows(cols) {
-  return cols.map((c) => [
-    c.source_file || "",
-    c.name,
-    c.is_pii ? "PII" : "NO PII",
-    (Number(c.pii_probability || 0) * 100).toFixed(2),
-    evidenceText(c) === "—" ? "" : evidenceText(c),
-    c.needs_review ? "Si" : "No",
-    c.entity ?? "",
-    c.entity_probability === null || c.entity_probability === undefined
-      ? ""
-      : (Number(c.entity_probability) * 100).toFixed(2),
-    Number(c.sample_size || 0),
-    c.information_classification_label || "Sin clasificación",
-    c.information_classification_group || "",
-    c.classification_review ? "Si" : "No",
-  ]);
+  return cols.map((c) => {
+    const base = [
+      c.source_file || "",
+      c.name,
+      c.is_pii ? "PII" : "NO PII",
+      c.entity ?? "",
+      c.information_classification_label || "Sin clasificación",
+      c.needs_review ? "Si" : "No",
+    ];
+    if (!state.showAudit) return base;
+    return [
+      c.source_file || "",
+      c.name,
+      c.is_pii ? "PII" : "NO PII",
+      (Number(c.pii_probability || 0) * 100).toFixed(2),
+      evidenceText(c) === "—" ? "" : evidenceText(c),
+      c.needs_review ? "Si" : "No",
+      c.entity ?? "",
+      c.entity_probability === null || c.entity_probability === undefined
+        ? ""
+        : (Number(c.entity_probability) * 100).toFixed(2),
+      Number(c.sample_size || 0),
+      c.information_classification_label || "Sin clasificación",
+      c.information_classification_group || "",
+      c.classification_review ? "Si" : "No",
+    ];
+  });
 }
 
 function triggerDownload(url, filename) {
@@ -730,7 +755,7 @@ function downloadCsv(filename, cols) {
   const blob = new Blob(
     [
       "\ufeff" +
-        [EXPORT_HEADER, ...buildExportRows(cols)].map(toCsvRow).join("\r\n"),
+        [exportHeader(), ...buildExportRows(cols)].map(toCsvRow).join("\r\n"),
     ],
     { type: "text/csv;charset=utf-8;" },
   );
@@ -743,7 +768,11 @@ async function downloadXlsx(filename, cols) {
   const res = await fetch(apiUrl(API.export), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, rows: buildExportRows(cols) }),
+    body: JSON.stringify({
+      filename,
+      header: exportHeader(),
+      rows: buildExportRows(cols),
+    }),
   });
   if (!res.ok) {
     let msg = "";
@@ -765,7 +794,8 @@ async function downloadWithFormat(base, fmt, cols) {
       await downloadXlsx(`${base}.xlsx`, cols);
     } catch (err) {
       showAlert(
-        (err.message || "No se pudo generar el XLSX.") + " Se descargará CSV.",
+        (err.message || "No fue posible generar el archivo XLSX.") +
+          " Se descargará el formato CSV.",
         "warn",
       );
       downloadCsv(`${base}.csv`, cols);
@@ -782,18 +812,17 @@ function safeBase(name) {
   );
 }
 
-function handleExportFile() {
+function handleExportFile(fmt = "csv") {
   if (!state.columns.length) {
-    showAlert("Primero analiza al menos una tabla antes de exportar.");
+    showAlert("Se debe analizar al menos una tabla antes de exportar.");
     return;
   }
   if (isIndexView()) return;
   const rows = visibleColumns();
   if (!rows.length) {
-    showAlert("Nada que exportar con los filtros actuales.", "warn");
+    showAlert("No hay resultados que exportar con los filtros aplicados.", "warn");
     return;
   }
-  const fmt = ($("#selExportFileFmt") || {}).value || "csv";
   const target =
     isMulti() && state.activeFile !== ALL
       ? state.activeFile
@@ -801,14 +830,13 @@ function handleExportFile() {
   downloadWithFormat(`analisis_pii_${safeBase(target)}`, fmt, rows);
 }
 
-function handleGenerateReport() {
+function handleGenerateReport(fmt = "csv") {
   if (!state.columns.length) {
     showAlert(
-      "Primero analiza al menos una tabla antes de generar el reporte.",
+      "Se debe analizar al menos una tabla antes de generar el reporte.",
     );
     return;
   }
-  const fmt = ($("#selReportFmt") || {}).value || "csv";
   downloadWithFormat("reporte_pii_global", fmt, state.columns);
 }
 
@@ -836,9 +864,6 @@ function setActiveFile(f) {
 function boot() {
   $("#pii-form").addEventListener("submit", onSubmit);
   $("#btn-clear").addEventListener("click", clearAll);
-  $("#btnExportFile").addEventListener("click", handleExportFile);
-  const br = $("#btnGenerateReport");
-  if (br) br.addEventListener("click", handleGenerateReport);
   $("#datasetFile").addEventListener("change", updateFileHint);
   const fl = $("#fileList");
   if (fl)
@@ -888,6 +913,10 @@ function boot() {
     state.onlyEmpty = e.target.checked;
     renderTable();
   });
+  bindChange("#in-show-audit", (e) => {
+    state.showAudit = e.target.checked;
+    renderTable();
+  });
   bindChange("#in-entity", (e) => {
     state.entity = e.target.value;
     renderTable();
@@ -896,10 +925,17 @@ function boot() {
     state.classification = e.target.value;
     renderTable();
   });
-  const sf = $("#selExportFileFmt");
-  if (sf) sf.addEventListener("change", () => renderTable());
-  const sr = $("#selReportFmt");
-  if (sr) sr.addEventListener("change", () => renderReport());
+  const bindDownload = (sel, handler) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const fmt = el.value;
+      el.value = "";
+      if (fmt) handler(fmt);
+    });
+  };
+  bindDownload("#selExportFileFmt", handleExportFile);
+  bindDownload("#selReportFmt", handleGenerateReport);
   $("#fileTabs").addEventListener("click", (e) => {
     const b = e.target.closest("[data-file]");
     if (b) setActiveFile(b.dataset.file);
@@ -912,6 +948,19 @@ function boot() {
     const b = e.target.closest("[data-file]");
     if (b) setActiveFile(b.dataset.file);
   });
+  const howto = $("#howtoDetails");
+  if (howto) {
+    const openHowto = () => {
+      howto.open = true;
+    };
+    document
+      .querySelectorAll('a[href="#interpretabilidad"]')
+      .forEach((a) => a.addEventListener("click", openHowto));
+    if (location.hash === "#interpretabilidad") openHowto();
+    window.addEventListener("hashchange", () => {
+      if (location.hash === "#interpretabilidad") openHowto();
+    });
+  }
   renderAll();
   updateFileHint();
   loadConfig();

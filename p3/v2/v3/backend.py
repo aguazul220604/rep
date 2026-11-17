@@ -746,6 +746,22 @@ def _parse_report_format(default="csv"):
     return None
 
 
+def _ambiente_label(server):
+    env = str((server or {}).get("environment", "")).strip().upper()
+    if env.startswith("PROD"):
+        return "PROD"
+    if env == "UAT":
+        return "UAT"
+    return "PROD" if (server or {}).get("flow") == "LEGACY" else ""
+
+
+def _report_columns():
+    return [
+        "ambiente" if c == "flow" else "size_mb" if c == "size" else c
+        for c in HISTORICAL_COLUMNS
+    ] + ["Estado"]
+
+
 def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
     """Genera el reporte en CSV o XLSX con el mismo formato de hoja."""
     if fmt == "xlsx":
@@ -777,8 +793,8 @@ def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
                         max(12, max_len + 2), 60
                     )
 
-                if "size" in columns:
-                    size_col = columns.index("size") + 1
+                if "size_mb" in columns:
+                    size_col = columns.index("size_mb") + 1
                     for (cell,) in ws.iter_rows(
                         min_row=2, min_col=size_col, max_col=size_col
                     ):
@@ -916,18 +932,18 @@ def api_authorize_cleanup():
     save_historical_records([merged[k] for k in sorted(merged)])
     _invalidate_scan_cache()
 
-    columns = HISTORICAL_COLUMNS + ["Estado"]
+    columns = _report_columns()
     rows = []
     for b in items:
         sp = b["s3_path"]
         rows.append({
             "id": b.get("id") or md5_of_path(sp),
             "s3_path": sp,
-            "flow": b.get("flow", ""),
+            "ambiente": _ambiente_label(server),
             "proyecto": b.get("proyecto", ""),
             "fecha_creacion_s3": b.get("fecha_creacion_s3", b.get("fecha_creacion", "")),
             "fecha_periodo_limpieza": current_period,
-            "size": b.get("size", b.get("size_mb", 0)),
+            "size_mb": b.get("size", b.get("size_mb", 0)),
             "Estado": b.get("Estado", b.get("estado", "")),
         })
 
@@ -983,7 +999,7 @@ def api_global_report():
     }
     current_period = datetime.now().strftime("%Y-%m-%d")
 
-    columns = HISTORICAL_COLUMNS + ["Estado"]
+    columns = _report_columns()
     rows = []
     for b in s3_bundles:
         sp = b["s3_path"]
@@ -993,22 +1009,22 @@ def api_global_report():
             rows.append({
                 "id": h.get("id", b["id"]),
                 "s3_path": sp,
-                "flow": h.get("flow", b["flow"]),
+                "ambiente": _ambiente_label(server),
                 "proyecto": h.get("proyecto", b["proyecto"]),
                 "fecha_creacion_s3": h.get("fecha_creacion_s3", b.get("fecha_creacion_s3", "")),
                 "fecha_periodo_limpieza": h.get("fecha_periodo_limpieza", ""),
-                "size": h.get("size", b.get("size", 0)),
+                "size_mb": h.get("size", b.get("size", 0)),
                 "Estado": "Conservado",
             })
         else:
             rows.append({
                 "id": b["id"],
                 "s3_path": sp,
-                "flow": b["flow"],
+                "ambiente": _ambiente_label(server),
                 "proyecto": b["proyecto"],
                 "fecha_creacion_s3": b.get("fecha_creacion_s3", ""),
                 "fecha_periodo_limpieza": current_period,
-                "size": b.get("size", 0),
+                "size_mb": b.get("size", 0),
                 "Estado": "Próximo a eliminar",
             })
 

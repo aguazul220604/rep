@@ -737,8 +737,102 @@ def api_get_historical():
     })
 
 
+def _parse_report_format(default="csv"):
+    fmt = (request.args.get("format") or default).strip().lower()
+    if fmt in ("excel", "xlsx"):
+        return "xlsx"
+    if fmt == "csv":
+        return "csv"
+    return None
+
+
+def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
+    """Genera el reporte en CSV o XLSX con el mismo formato de hoja."""
+    if fmt == "xlsx":
+        try:
+            from openpyxl.styles import Alignment, Font, PatternFill
+            from openpyxl.utils import get_column_letter
+
+            df = pd.DataFrame(rows, columns=columns)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name=sheet_name)
+                ws = writer.sheets[sheet_name]
+
+                header_fill = PatternFill("solid", fgColor="F2D5D7")
+                for cell in ws[1]:
+                    cell.font = Font(bold=True, color="7A0A12")
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(vertical="center")
+
+                ws.freeze_panes = "A2"
+                ws.auto_filter.ref = ws.dimensions
+
+                for idx, column in enumerate(columns, start=1):
+                    max_len = max(
+                        [len(str(column))]
+                        + [len(str(row.get(column, ""))) for row in rows]
+                    )
+                    ws.column_dimensions[get_column_letter(idx)].width = min(
+                        max(12, max_len + 2), 60
+                    )
+
+                if "size" in columns:
+                    size_col = columns.index("size") + 1
+                    for (cell,) in ws.iter_rows(
+                        min_row=2, min_col=size_col, max_col=size_col
+                    ):
+                        cell.number_format = "#,##0.00"
+
+            buffer.seek(0)
+            return send_file(
+                buffer,
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"
+                ),
+                as_attachment=True,
+                download_name=f"{base_name}.xlsx",
+            )
+        except Exception:
+            app.logger.exception("No fue posible generar el archivo Excel.")
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "No fue posible generar el archivo Excel.",
+                    }
+                ),
+                500,
+            )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    writer.writerows(rows)
+    output.seek(0)
+    return send_file(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"{base_name}.csv",
+    )
+
+
 @app.route("/authorize-cleanup", methods=["POST"])
 def api_authorize_cleanup():
+    fmt = _parse_report_format("xlsx")
+    if fmt is None:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Formato no válido. Use csv o xlsx.",
+                }
+            ),
+            400,
+        )
+
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"status": "error", "message": "JSON inválido"}), 400
@@ -822,13 +916,11 @@ def api_authorize_cleanup():
     save_historical_records([merged[k] for k in sorted(merged)])
     _invalidate_scan_cache()
 
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=HISTORICAL_COLUMNS + ["Estado"])
-    writer.writeheader()
-
+    columns = HISTORICAL_COLUMNS + ["Estado"]
+    rows = []
     for b in items:
         sp = b["s3_path"]
-        writer.writerow({
+        rows.append({
             "id": b.get("id") or md5_of_path(sp),
             "s3_path": sp,
             "flow": b.get("flow", ""),
@@ -839,12 +931,12 @@ def api_authorize_cleanup():
             "Estado": b.get("Estado", b.get("estado", "")),
         })
 
-    output.seek(0)
-    return send_file(
-        io.BytesIO(output.getvalue().encode("utf-8")),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name=f"Reporte_Limpieza_{current_period}.csv",
+    return _report_response(
+        rows,
+        columns,
+        f"Reporte_Limpieza_{current_period}",
+        fmt,
+        sheet_name="Reporte de limpieza",
     )
 
 
@@ -859,6 +951,18 @@ def _coerce_item_date(bundle):
 
 @app.route("/global-report", methods=["GET"])
 def api_global_report():
+    fmt = _parse_report_format("csv")
+    if fmt is None:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Formato no válido. Use csv o xlsx.",
+                }
+            ),
+            400,
+        )
+
     cutoff_days = get_cutoff_days_from_request()
     force = _request_wants_refresh()
     server = detect_current_server()
@@ -879,16 +983,14 @@ def api_global_report():
     }
     current_period = datetime.now().strftime("%Y-%m-%d")
 
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=HISTORICAL_COLUMNS + ["Estado"])
-    writer.writeheader()
-
+    columns = HISTORICAL_COLUMNS + ["Estado"]
+    rows = []
     for b in s3_bundles:
         sp = b["s3_path"]
         norm_sp = str(sp).rstrip("/")
         if norm_sp in historical_by_path:
             h = historical_by_path[norm_sp]
-            writer.writerow({
+            rows.append({
                 "id": h.get("id", b["id"]),
                 "s3_path": sp,
                 "flow": h.get("flow", b["flow"]),
@@ -899,7 +1001,7 @@ def api_global_report():
                 "Estado": "Conservado",
             })
         else:
-            writer.writerow({
+            rows.append({
                 "id": b["id"],
                 "s3_path": sp,
                 "flow": b["flow"],
@@ -910,10 +1012,11 @@ def api_global_report():
                 "Estado": "Próximo a eliminar",
             })
 
-    output.seek(0)
-    return send_file(
-        io.BytesIO(output.getvalue().encode("utf-8")),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name=f"Consulta_Global_S3_{datetime.now().strftime('%Y%m%d')}.csv",
+    stamp = datetime.now().strftime("%Y%m%d")
+    return _report_response(
+        rows,
+        columns,
+        f"Consulta_Global_S3_{stamp}",
+        fmt,
+        sheet_name="Consulta global",
     )

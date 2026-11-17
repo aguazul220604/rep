@@ -427,6 +427,14 @@ table,
   flex-wrap: wrap;
   margin-top: var(--s6);
 }
+.format-select {
+  width: auto;
+  min-width: 140px;
+  font-size: var(--t-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: var(--s2) var(--s12) var(--s2) var(--s3);
+}
 .transfer-result {
   margin-top: var(--s3);
   font-size: var(--t-small);
@@ -539,6 +547,34 @@ table,
   font-size: var(--t-small);
   line-height: 1.6;
   color: var(--panel-ink-mid);
+}
+.confirm-field {
+  margin: 0 0 var(--s6);
+}
+.confirm-field .field-label {
+  color: var(--panel-ink-soft);
+}
+.confirm-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-rule-strong);
+  border-bottom-width: 2px;
+  background-color: var(--panel-raised);
+  color: var(--panel-ink);
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  letter-spacing: 0.08em;
+  padding: var(--s3) var(--s4);
+  cursor: pointer;
+}
+.confirm-select:hover {
+  border-color: var(--panel-ink);
+}
+.confirm-select:focus {
+  outline: none;
+  border-color: var(--signal);
 }
 .confirm-actions {
   display: flex;

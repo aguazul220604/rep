@@ -18,7 +18,7 @@
       <div class="preloader-panel">
         <span class="preloader-spinner" aria-hidden="true"></span>
         <p class="preloader-text" id="preloader-text">
-          Leyendo S3 y dataset histórico…
+          Consulta en curso de S3 y del dataset histórico…
         </p>
       </div>
     </div>
@@ -26,7 +26,7 @@
       <div class="topbar">
         <div class="topbar-inner">
           <span class="topbar-clock" id="topbar-clock">—</span>
-          <nav class="topbar-links" aria-label="Utility">
+          <nav class="topbar-links" aria-label="Utilidades">
             <span id="stat-periodo-top">Fecha</span>
             <span id="stat-criterio-top">&gt; meses</span>
           </nav>
@@ -1431,8 +1431,8 @@
           <div>
             <h1 class="wordmark">
               Banamex<span class="wordmark-sub"
-                >Gestión y Automatización de Eliminación de Bundles (Backups)
-                Dataiku en S3</span
+                >Gestión y automatización de la eliminación de bundles
+                (backups) de Dataiku en S3</span
               >
             </h1>
           </div>
@@ -1440,7 +1440,7 @@
         <dl class="masthead-meta">
           <div>
             <dt class="visually-hidden">Periodo</dt>
-            <dd><b id="meta-holder">Auditoría S3</b></dd>
+            <dd><b id="meta-holder">Auditoría de S3</b></dd>
           </div>
         </dl>
       </header>
@@ -1464,13 +1464,13 @@
       <article class="slip" id="guide-slip" aria-labelledby="guide-title">
         <header class="slip-head">
           <div class="guide-heading">
-            <h2 class="slip-title" id="guide-title">¿Cómo funciona?</h2>
+            <h2 class="slip-title" id="guide-title">Guía de uso</h2>
             <p class="guide-subtitle">
-              Guía rápida: Gestiona y autoriza la eliminación de backups de
-              proyectos Dataiku (bundles) almacenados en S3
+              Resumen del proceso de gestión y autorización de la eliminación
+              de bundles (backups) de proyectos Dataiku almacenados en S3
             </p>
           </div>
-          <p class="slip-ref">guía</p>
+          <p class="slip-ref">Funcionamiento</p>
         </header>
         <div class="guide-grid">
           <section class="state-block">
@@ -1480,27 +1480,28 @@
               (<span id="guide-criterio">&gt; 6 meses</span>), agrupados por
               proyecto. La versión más reciente se marca
               <strong>Conservar</strong>; las anteriores,
-              <strong>Eliminar</strong>. Ajústalo por fila o con el check del
-              encabezado.
+              <strong>Eliminar</strong>. La selección se ajusta por fila o
+              mediante la casilla del encabezado.
             </p>
           </section>
           <section class="state-block">
             <h3 class="field-label">2 · Histórico</h3>
             <p class="state-sub">
-              Metadata de los bundles conservados (ruta, proyecto, fechas y
-              tamaño). Al autorizar, lo marcado como
-              <strong>Conservar</strong> se registra aquí y se preserva en S3
-              ante futuras limpiezas; lo marcado como
-              <strong>Eliminar</strong> se retira.
+              Metadatos de los bundles conservados (ruta, proyecto, fechas y
+              tamaño). Al autorizar, los bundles marcados como
+              <strong>Conservar</strong> se registran aquí y se preservan en S3
+              ante futuras limpiezas; los marcados como
+              <strong>Eliminar</strong> se retiran.
             </p>
           </section>
           <section class="state-block">
             <h3 class="field-label">3 · Autorizar</h3>
             <p class="state-sub">
-              Elimina de S3 lo marcado como <strong>Eliminar</strong> y actualiza
-              el histórico: <strong>Conservar</strong> se registra y
-              <strong>Eliminar</strong> se retira. Descarga un CSV como
-              evidencia.
+              Elimina de S3 los bundles marcados como <strong>Eliminar</strong> y
+              actualiza el histórico: los marcados como
+              <strong>Conservar</strong> se registran y los marcados como
+              <strong>Eliminar</strong> se retiran. Se genera la descarga de un
+              archivo CSV como evidencia.
             </p>
           </section>
         </div>
@@ -1526,11 +1527,11 @@
             </p>
             <div class="amount-foot">
               <div class="date-box">
-                <span class="field-label">Por liberar</span>
+                <span class="field-label">Espacio por liberar</span>
                 <span id="stat-liberar">0.00 MB</span>
               </div>
               <div class="date-box">
-                <span class="field-label">Resultante</span>
+                <span class="field-label">Espacio resultante</span>
                 <span id="stat-resultante">0.00 MB</span>
               </div>
             </div>
@@ -1538,19 +1539,26 @@
               Periodo de ejecución: Fecha
             </p>
             <p class="amount-words" id="stat-criterio">
-              Antigüedad de versionamientos: &gt; meses
+              Antigüedad de los versionamientos: &gt; meses
             </p>
           </div>
           <div>
             <span class="field-label">Acciones</span>
             <div class="btn-row">
+              <label class="visually-hidden" for="global-format"
+                >Formato de descarga</label
+              >
+              <select class="select format-select" id="global-format">
+                <option value="csv">CSV (.csv)</option>
+                <option value="xlsx">Excel (.xlsx)</option>
+              </select>
               <button
                 class="btn btn-secondary"
                 id="btn-global"
                 type="button"
                 onclick="triggerGlobalReport()"
               >
-                Consulta Global
+                Descargar consulta global
               </button>
               <button
                 class="btn btn-danger"
@@ -1558,7 +1566,7 @@
                 type="button"
                 onclick="triggerAuthorize()"
               >
-                Autorizar
+                Autorizar eliminación
               </button>
             </div>
             <p
@@ -1572,12 +1580,12 @@
               style="margin-top: var(--s4)"
             >
               <p class="state-word">Sin autorización certificada</p>
-              <p class="state-sub">Al autorizar, el reporte CSV se descarga.</p>
+              <p class="state-sub">La autorización genera la descarga del reporte en formato CSV.</p>
             </div>
           </div>
         </div>
         <footer class="slip-foot">
-          <span>Autorizar elimina en S3 los bundles marcados para eliminar y actualiza el histórico</span>
+          <span>La autorización elimina en S3 los bundles marcados para eliminar y actualiza el histórico</span>
           <span>BN-A</span>
         </footer>
       </article>
@@ -1590,7 +1598,7 @@
                 Bundles próximos al periodo de limpieza
               </span>
               <span class="recent-summary-sub">
-                Ventana 0–6 meses · solo consulta
+                Ventana de 0 a 6 meses · únicamente consulta
               </span>
             </span>
             <span class="recent-summary-meta" id="recent-count">—</span>
@@ -1608,14 +1616,15 @@
             </div>
             <p class="recent-note">
               Bundles (backups) que aún no alcanzan la antigüedad mínima para
-              eliminarse. Aquí son solo consulta: no tienen estatus, no se
-              modifican y no se incluyen en las métricas ni en Autorizar.
+              eliminarse. En esta sección son únicamente de consulta: no cuentan
+              con estatus, no se modifican y no se incluyen en las métricas ni
+              en el proceso de autorización.
             </p>
             <p class="recent-note">
-              La columna «Faltan» indica los días restantes para entrar al
-              periodo de limpieza; al cumplirse, el bundle aparecerá en
-              Versionamiento, donde podrás marcarlo Conservar o Eliminar. Usa el
-              botón para ordenar por proyecto o por proximidad.
+              La columna «Días restantes» indica los días que faltan para entrar
+              al periodo de limpieza; al cumplirse, el bundle aparecerá en
+              Versionamiento, donde podrá marcarse como Conservar o Eliminar. El
+              botón permite ordenar por proyecto o por proximidad.
             </p>
             <div id="recent-content"></div>
           </div>
@@ -1632,11 +1641,11 @@
       "
     >
       <p class="masthead-sub" style="margin: 0">
-        Gestión y Automatización de Eliminación de Bundles (Backups) Dataiku en
-        S3
+        Gestión y automatización de la eliminación de bundles (backups) de
+        Dataiku en S3
       </p>
       <p class="masthead-meta">
-        Bundles: antigüedad &gt; 6 meses · dataset histórico
+        Bundles con antigüedad mayor a 6 meses · dataset histórico
       </p>
     </footer>
 
@@ -1662,13 +1671,22 @@
             </h2>
           </div>
         </div>
-        <p class="confirm-text" id="confirm-modal-text">¿Deseas continuar?</p>
+        <p class="confirm-text" id="confirm-modal-text">Se solicita confirmación para continuar.</p>
+        <div class="confirm-field">
+          <label class="field-label" for="authorize-format"
+            >Formato del reporte</label
+          >
+          <select class="confirm-select" id="authorize-format">
+            <option value="xlsx" selected>Excel (.xlsx)</option>
+            <option value="csv">CSV (.csv)</option>
+          </select>
+        </div>
         <div class="confirm-actions">
           <button class="btn btn-secondary" type="button" data-modal-cancel>
             Cancelar
           </button>
           <button class="btn btn-danger" type="button" data-modal-confirm>
-            Autorizar
+            Autorizar eliminación
           </button>
         </div>
       </div>

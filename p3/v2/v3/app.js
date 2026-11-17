@@ -97,7 +97,8 @@ function hideError() {
 }
 
 function confirmAction(options = {}) {
-  const message = options.message || "¿Deseas continuar?";
+  const message =
+    options.message || "Se solicita confirmación para continuar.";
   const modal = $("#confirm-modal");
   if (!modal) return Promise.resolve(window.confirm(message));
 
@@ -189,11 +190,11 @@ window.AppState = {
   currentSection: "CLEANUP",
   isLoading: false,
   busy: false,
-  preloaderText: "Consultando S3 y dataset histórico…",
+  preloaderText: "Consulta en curso de S3 y del dataset histórico…",
 
   async init() {
     this.isLoading = true;
-    this.preloaderText = "Consultando S3 y dataset histórico…";
+    this.preloaderText = "Consulta en curso de S3 y del dataset histórico…";
     this.renderPreloader();
     await this.fetchScanBundles();
   },
@@ -241,7 +242,7 @@ window.AppState = {
 
   async fetchScanBundles({ refresh = false } = {}) {
     this.isLoading = true;
-    this.preloaderText = "Consultando S3 y dataset histórico…";
+    this.preloaderText = "Consulta en curso de S3 y del dataset histórico…";
     hideError();
     this.renderPreloader();
     this.renderCurrentView();
@@ -268,19 +269,19 @@ window.AppState = {
         } catch (_) {}
       } else {
         showError(
-          "Error al obtener versionamiento: respuesta inválida del backend",
+          "No fue posible obtener el versionamiento: respuesta no válida del servicio.",
         );
       }
     } catch (error) {
       console.error("Error al obtener /scan-bundles:", error);
       if (isAbortError(error)) {
         showError(
-          "El escaneo de S3 superó el tiempo de espera. Vuelve a intentarlo; el siguiente intento puede usar caché.",
+          "El escaneo de S3 excedió el tiempo de espera. Se solicita reintentar; el siguiente intento puede utilizar la caché.",
           true,
         );
       } else {
         showError(
-          "No se pudo cargar el versionamiento (S3). Se debe revisar la conexión",
+          "No fue posible cargar el versionamiento (S3). Se requiere verificar la conexión.",
           true,
         );
       }
@@ -295,7 +296,7 @@ window.AppState = {
 
   async fetchHistoricBundles() {
     this.isLoading = true;
-    this.preloaderText = "Leyendo histórico de bundles…";
+    this.preloaderText = "Consultando el histórico de bundles…";
     hideError();
     this.renderPreloader();
     this.renderCurrentView();
@@ -308,18 +309,20 @@ window.AppState = {
         this.historicBundles = data.bundles || [];
         if (data.server) this.server = { ...this.server, ...data.server };
       } else {
-        showError("Error al obtener histórico: respuesta inválida del backend");
+        showError(
+          "No fue posible obtener el histórico: respuesta no válida del servicio.",
+        );
       }
     } catch (error) {
       console.error("Error al obtener /get-historical:", error);
       if (isAbortError(error)) {
         showError(
-          "El histórico tardó más de 60 segundos en responder. Vuelve a intentarlo.",
+          "El histórico excedió 60 segundos de espera. Se solicita reintentar.",
           true,
         );
       } else {
         showError(
-          "No se pudo cargar el histórico. Revise la conexión e intente de nuevo.",
+          "No fue posible cargar el histórico. Se requiere verificar la conexión y reintentar.",
           true,
         );
       }
@@ -407,11 +410,11 @@ window.AppState.renderMetrics = function () {
   set("stat-periodo", `Periodo de ejecución: ${this.periodoEjecucion}`);
   set(
     "stat-criterio",
-    `Antigüedad de versionamientos: ${this.criterioAntiguedad}`,
+    `Antigüedad de los versionamientos: ${this.criterioAntiguedad}`,
   );
   set("stat-periodo-top", this.periodoEjecucion);
   set("stat-criterio-top", this.criterioAntiguedad);
-  set("meta-asof", `as of ${this.periodoEjecucion}`);
+  set("meta-asof", `Al ${this.periodoEjecucion}`);
   set("guide-criterio", this.criterioAntiguedad);
 };
 
@@ -419,10 +422,10 @@ window.AppState.renderCurrentView = function () {
   const host = document.getElementById("main-content-container");
   if (!host) return;
   if (this.isLoading) {
-    host.innerHTML = `<article class="slip" aria-label="Cargando">
-      <header class="slip-head"><h2 class="slip-title">Cargando información</h2><p class="slip-ref">S3 · histórico</p></header>
+    host.innerHTML = `<article class="slip" aria-label="Consulta en curso">
+      <header class="slip-head"><h2 class="slip-title">Consulta en curso</h2><p class="slip-ref">S3 · histórico</p></header>
       <div class="skeleton is-tall"></div><div class="skeleton"></div><div class="skeleton is-short"></div>
-      <footer class="slip-foot"><span>Consultando S3 y dataset histórico</span><span>…</span></footer>
+      <footer class="slip-foot"><span>Consulta de S3 y del dataset histórico</span><span>…</span></footer>
     </article>`;
     return;
   }
@@ -445,8 +448,8 @@ function syncSelectAll() {
     check.disabled = true;
     check.checked = false;
     check.indeterminate = false;
-    check.setAttribute("aria-label", "No hay bundles para seleccionar");
-    check.title = "No hay bundles para seleccionar";
+    check.setAttribute("aria-label", "Sin bundles disponibles para selección");
+    check.title = "Sin bundles disponibles para selección";
     return;
   }
   const descartados = items.filter(
@@ -548,7 +551,7 @@ function renderProjectTable(items, emptyMessage, ariaLabel, options = {}) {
     ? "Conservar todos"
     : "Eliminar todos";
   return `<div class="table-wrap"><table class="table" aria-label="${escAttr(ariaLabel)}">
-      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Fecha creación S3</th><th scope="col">Peso</th>${cleanupHeader}<th scope="col" class="status-col-head"><label class="select-all"><input type="checkbox" class="select-all-check"${allDescartado ? " checked" : ""}${list.length === 0 ? " disabled" : ""} aria-label="${escAttr(selectAllLabel)}" title="${escAttr(selectAllLabel)}"><span class="visually-hidden">Seleccionar todos</span></label><span class="status-col-label">Acción al autorizar</span></th></tr></thead>
+      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versiones</th><th scope="col">Fecha de creación en S3</th><th scope="col">Tamaño</th>${cleanupHeader}<th scope="col" class="status-col-head"><label class="select-all"><input type="checkbox" class="select-all-check"${allDescartado ? " checked" : ""}${list.length === 0 ? " disabled" : ""} aria-label="${escAttr(selectAllLabel)}" title="${escAttr(selectAllLabel)}"><span class="visually-hidden">Seleccionar todos</span></label><span class="status-col-label">Acción al autorizar</span></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -558,10 +561,10 @@ function renderVersionamiento(bundles) {
   return `${slipOpen("Versionamiento de proyectos", "versionamiento")}
     ${renderContextHeader()}
     <div class="view-title-row">
-      <div class="controls-group"><span class="field-label" style="margin:0">Agrupado por proyecto · excluye histórico</span></div>
+      <div class="controls-group"><span class="field-label" style="margin:0">Agrupado por proyecto · excluye el histórico</span></div>
       <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('HISTORIC')">Consultar histórico</button></div>
     </div>
-    ${renderProjectTable(items, "No hay registros de versionamiento", "Versionamiento")}
+    ${renderProjectTable(items, "No se identificaron registros de versionamiento", "Versionamiento")}
     ${slipClose(`${items.length} bundles · la versión más reciente se conserva (default)`, "BN-01")}`;
 }
 
@@ -573,7 +576,7 @@ function renderHistorico(bundles) {
       <div class="controls-group"><span class="field-label" style="margin:0">Dataset histórico</span></div>
       <div class="controls-group"><button class="btn btn-secondary btn-highlight" type="button" onclick="AppState.switchSection('CLEANUP')">Consultar versionamiento</button></div>
     </div>
-    ${renderProjectTable(items, "No hay registros históricos", "Histórico", { showCleanupPeriod: true })}
+    ${renderProjectTable(items, "No se identificaron registros históricos", "Histórico", { showCleanupPeriod: true })}
     ${slipClose(`${items.length} registros en histórico`, "BN-02")}`;
 }
 
@@ -619,7 +622,7 @@ function renderRecentSection() {
 
   const items = app.recentBundles || [];
   if (items.length === 0) {
-    contentEl.innerHTML = `<div class="state-block"><p class="state-word">Sin registros</p><p class="state-sub">No hay bundles en la ventana de 6 meses.</p></div>`;
+    contentEl.innerHTML = `<div class="state-block"><p class="state-word">Sin registros</p><p class="state-sub">No se identificaron bundles en la ventana de 6 meses.</p></div>`;
     return;
   }
   contentEl.innerHTML = renderRecentTable(items, app.recentSort);
@@ -675,7 +678,7 @@ function renderRecentTable(items, sortMode) {
     .join("");
 
   return `<div class="table-wrap"><table class="table" aria-label="Bundles próximos al periodo de limpieza">
-      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versión</th><th scope="col">Fecha</th><th scope="col">Faltan</th></tr></thead>
+      <thead><tr><th scope="col">Proyecto</th><th scope="col">Versión</th><th scope="col">Fecha de creación</th><th scope="col">Días restantes</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -692,7 +695,9 @@ function setBusy(busy) {
     btn.setAttribute("aria-busy", String(busy));
   }
   const auth = $("#btn-authorize");
-  if (auth) auth.textContent = busy ? "Autorizando…" : "Autorizar";
+  if (auth) auth.textContent = busy ? "Autorizando…" : "Autorizar eliminación";
+  const formatSelect = document.getElementById("global-format");
+  if (formatSelect) formatSelect.disabled = busy;
 }
 
 function printStamp(text) {
@@ -700,7 +705,7 @@ function printStamp(text) {
   if (!slot) return;
   slot.textContent = "";
   const stamp = el("div", "stamp is-landing");
-  stamp.append(el("span", "stamp-word", "Certified"));
+  stamp.append(el("span", "stamp-word", "Certificado"));
   stamp.append(el("span", "stamp-rule"));
   stamp.append(el("span", "stamp-meta", text || "Banamex"));
   slot.append(stamp);
@@ -712,21 +717,26 @@ window.triggerAuthorize = async function () {
 
   const payload = window.AppState.getUnionBundles();
   if (payload.length === 0) {
-    showError("No hay bundles para autorizar");
+    showError("No se identificaron bundles para autorizar.");
     return;
   }
   const toDelete = payload.filter((b) => b.estado === "Descartado").length;
   const confirmed = await window.confirmAction({
     title: "Autorizar eliminación en S3",
-    message: `¿Está seguro de autorizar la eliminación en S3? Se eliminarán ${toDelete} bundle(s) marcados para eliminar y se actualizará el histórico.`,
-    confirmLabel: "Autorizar",
+    message: `Se solicita confirmación para autorizar la eliminación en S3. Se eliminarán ${toDelete} bundles marcados para eliminar y se actualizará el histórico.`,
+    confirmLabel: "Autorizar eliminación",
     cancelLabel: "Cancelar",
   });
   if (!confirmed) return;
 
+  const format =
+    ($("#authorize-format")?.value || "xlsx").toLowerCase() === "csv"
+      ? "csv"
+      : "xlsx";
+
   try {
     setBusy(true);
-    const url = apiUrl(API.authorize);
+    const url = apiUrl(`${API.authorize}?format=${format}`);
     const response = await fetchWithTimeout(
       url,
       {
@@ -742,25 +752,27 @@ window.triggerAuthorize = async function () {
         const err = await response.json();
         if (err && err.message) msg = err.message;
       } catch (_) {}
-      showError(`Error al procesar la autorización: ${msg}`);
+      showError(`No fue posible procesar la autorización: ${msg}`);
       return;
     }
     const blob = await response.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    a.download = `Reporte_Limpieza_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `Reporte_Limpieza_${new Date().toISOString().slice(0, 10)}.${format}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     $("#action-result").textContent =
-      `Limpieza ejecutada · ${payload.length} bundles · CSV descargado`;
+      `Limpieza ejecutada · ${payload.length} bundles · archivo ${
+        format === "xlsx" ? "Excel" : "CSV"
+      } descargado`;
     printStamp(`Banamex · ${window.AppState.periodoEjecucion}`);
     window.AppState.historicBundles = [];
     await window.AppState.fetchScanBundles({ refresh: true });
   } catch (error) {
     console.error("Error en authorize:", error);
-    showError("Error al procesar la autorización");
+    showError("No fue posible procesar la autorización.");
   } finally {
     setBusy(false);
   }
@@ -769,21 +781,47 @@ window.triggerAuthorize = async function () {
 window.triggerGlobalReport = async function () {
   if (window.AppState.busy) return;
   hideError();
+  const format =
+    ($("#global-format")?.value || "csv").toLowerCase() === "xlsx"
+      ? "xlsx"
+      : "csv";
   try {
     setBusy(true);
     const suffix = window.AppState.getCutoffQuery
       ? window.AppState.getCutoffQuery()
       : "";
-    const url = apiUrl(API.globalReport + suffix);
+    const url = apiUrl(
+      `${API.globalReport}${suffix}${suffix ? "&" : "?"}format=${format}`,
+    );
     const response = await fetchWithTimeout(url, {}, 180000);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      let msg = "";
+      try {
+        const err = await response.json();
+        if (err && err.message) msg = err.message;
+      } catch (_) {}
+      throw new Error(msg || `HTTP ${response.status}`);
+    }
     const blob = await response.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
-    window.open(downloadUrl, "_blank");
-    $("#action-result").textContent = "Reporte global generado";
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    a.href = downloadUrl;
+    a.download = `Consulta_Global_S3_${stamp}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    $("#action-result").textContent = `Se generó el reporte global (${
+      format === "xlsx" ? "Excel" : "CSV"
+    }).`;
   } catch (error) {
     console.error("Error en global-report:", error);
-    showError("No se pudo generar el reporte global");
+    const detail =
+      error && error.message && !/^HTTP /.test(error.message)
+        ? ` ${error.message}`
+        : "";
+    showError(`No fue posible generar el reporte global.${detail}`);
   } finally {
     setBusy(false);
   }

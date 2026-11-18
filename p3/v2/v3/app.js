@@ -183,6 +183,10 @@ window.AppState = {
     environment: "—",
     flow: "NEW",
     known: true,
+    can_authorize: true,
+    folder: "S3_Bundle_Backup_Path",
+    shared_pool: false,
+    authorize_block_reason: "",
     last_scan: "",
   },
   recentBundles: [],
@@ -416,7 +420,43 @@ window.AppState.renderMetrics = function () {
   set("stat-criterio-top", this.criterioAntiguedad);
   set("meta-asof", `Al ${this.periodoEjecucion}`);
   set("guide-criterio", this.criterioAntiguedad);
+  renderScopeGuard();
 };
+
+function renderScopeGuard() {
+  const server = window.AppState.server || {};
+  const canAuthorize =
+    server.can_authorize !== false && server.known !== false;
+  const btn = document.getElementById("btn-authorize");
+  const note = document.getElementById("authorize-guard");
+  if (btn) {
+    btn.disabled = !canAuthorize || Boolean(window.AppState.busy);
+    btn.setAttribute("aria-disabled", String(!canAuthorize));
+    if (canAuthorize) {
+      btn.removeAttribute("title");
+    } else {
+      btn.title =
+        server.authorize_block_reason ||
+        "Autorización no disponible para este servidor.";
+    }
+  }
+  if (!note) return;
+  if (!canAuthorize) {
+    note.hidden = false;
+    note.textContent =
+      server.authorize_block_reason ||
+      "La autorización está deshabilitada para este servidor.";
+  } else if (server.shared_pool) {
+    note.hidden = false;
+    note.textContent = `Alcance: pool compartido PROD/COB · Folder ${
+      server.folder || "S3_Bundle_Backup_Path"
+    } · raíz dataiku`;
+  } else {
+    note.hidden = true;
+    note.textContent = "";
+  }
+}
+window.renderScopeGuard = renderScopeGuard;
 
 window.AppState.renderCurrentView = function () {
   const host = document.getElementById("main-content-container");
@@ -468,10 +508,16 @@ function syncSelectAll() {
 
 function renderContextHeader() {
   const s = window.AppState.server || {};
+  const scopeItem = s.shared_pool
+    ? `<span class="context-sep" aria-hidden="true">·</span>
+    <span class="context-item"><span class="context-label">Alcance</span><strong>PROD/COB compartido</strong></span>`
+    : "";
   return `<div class="context-bar">
     <span class="context-item"><span class="context-label">Ambiente</span><strong>${escHtml(s.environment || "—")}</strong></span>
     <span class="context-sep" aria-hidden="true">·</span>
-    <span class="context-item"><span class="context-label">Servidor</span><strong>${escHtml(s.hostname || "—")}</strong></span>
+    <span class="context-item"><span class="context-label">Servidor</span><strong>${escHtml(s.nickname || s.hostname || "—")}</strong></span>
+    <span class="context-sep" aria-hidden="true">·</span>
+    <span class="context-item"><span class="context-label">Folder</span><strong>${escHtml(s.folder || "—")}</strong></span>${scopeItem}
   </div>`;
 }
 
@@ -601,7 +647,7 @@ function renderRecentSection() {
       ? ` · Escaneo S3: ${server.last_scan}`
       : "";
     const cacheLabel = server.cache_hit ? " · caché" : "";
-    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.hostname || "—"}${scanAsOf}${cacheLabel}`;
+    contextEl.textContent = `Ambiente: ${server.environment || "—"} · Servidor: ${server.nickname || server.hostname || "—"}${scanAsOf}${cacheLabel}`;
   }
   if (sortBtn) {
     sortBtn.textContent =
@@ -688,10 +734,13 @@ function renderRecentTable(items, sortMode) {
    ===================================================================== */
 function setBusy(busy) {
   window.AppState.busy = busy;
+  const server = window.AppState.server || {};
+  const canAuthorize =
+    server.can_authorize !== false && server.known !== false;
   for (const id of ["btn-authorize", "btn-global"]) {
     const btn = document.getElementById(id);
     if (!btn) continue;
-    btn.disabled = busy;
+    btn.disabled = busy || (id === "btn-authorize" && !canAuthorize);
     btn.setAttribute("aria-busy", String(busy));
   }
   const auth = $("#btn-authorize");
@@ -715,15 +764,27 @@ window.triggerAuthorize = async function () {
   if (window.AppState.busy) return;
   hideError();
 
+  const server = window.AppState.server || {};
+  if (server.can_authorize === false || server.known === false) {
+    showError(
+      server.authorize_block_reason ||
+        "La autorización está deshabilitada para este servidor.",
+    );
+    return;
+  }
+
   const payload = window.AppState.getUnionBundles();
   if (payload.length === 0) {
     showError("No se identificaron bundles para autorizar.");
     return;
   }
   const toDelete = payload.filter((b) => b.estado === "Descartado").length;
+  const sharedNote = server.shared_pool
+    ? " Este entorno gestiona un pool compartido PROD/COB."
+    : "";
   const confirmed = await window.confirmAction({
     title: "Autorizar eliminación en S3",
-    message: `Se solicita confirmación para autorizar la eliminación en S3. Se eliminarán ${toDelete} bundles marcados para eliminar y se actualizará el histórico.`,
+    message: `Se solicita confirmación para autorizar la eliminación en S3. Se eliminarán ${toDelete} bundles marcados para eliminar y se actualizará el histórico.${sharedNote}`,
     confirmLabel: "Autorizar eliminación",
     cancelLabel: "Cancelar",
   });

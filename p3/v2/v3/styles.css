@@ -440,6 +440,13 @@ table,
   font-size: var(--t-small);
   min-height: 1.6em;
 }
+.guard-note {
+  margin: var(--s3) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink-mid);
+}
 
 .alert {
   display: flex;

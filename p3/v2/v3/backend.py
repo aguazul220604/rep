@@ -18,7 +18,7 @@ S3_FOLDER_NAME = os.environ.get("S3_FOLDER_NAME", "S3_Bundle_Backup_Path")
 HISTORICAL_DATASET_NAME = "historical"
 HISTORICAL_COLUMNS = [
     "id", "s3_path", "flow", "proyecto",
-    "fecha_creacion_s3", "fecha_periodo_limpieza", "size",
+    "fecha_creacion_s3", "fecha_periodo_limpieza", "size_mb",
 ]
 VALID_ESTADOS = ("Conservado", "Descartado")
 DEFAULT_CUTOFF_DAYS = 180
@@ -34,6 +34,9 @@ SCAN_TIME_BUDGET_S = float(os.environ.get("SCAN_TIME_BUDGET_S", "30"))
 SCAN_MAX_WORKERS = max(1, int(os.environ.get("SCAN_MAX_WORKERS", "8")))
 SCAN_MAX_DETAIL_CALLS = max(1, int(os.environ.get("SCAN_MAX_DETAIL_CALLS", "4000")))
 SCAN_CACHE_TTL_S = max(0.0, float(os.environ.get("SCAN_CACHE_TTL_S", "300")))
+LEGACY_ALLOW_FALLBACK = str(
+    os.environ.get("LEGACY_ALLOW_FALLBACK", "0")
+).strip().lower() in ("1", "true", "yes")
 
 NEW_FLOW_HOST_MAP = {
     "sd-7u15-eilw": ("PROD-1", "DKUF"),
@@ -46,8 +49,8 @@ NEW_FLOW_HOST_MAP = {
     "sd-zqo7-s06c": ("UAT", "DKUD"),
 }
 LEGACY_SERVER_MAP = {
-    "sd-90d4-afu8": "sd-90d4-afu8",
-    "sd-xt24-jvpi": "sd-xt24-jvpi",
+    "sd-90d4-afu8": "PROD",
+    "sd-xt24-jvpi": "COB",
 }
 
 _SCAN_CACHE = {
@@ -196,6 +199,20 @@ def parse_s3_path(path):
     return None
 
 
+def _is_legacy_bundle_path(path):
+    clean = str(path or "").lstrip("/").rstrip("/")
+    if not clean or clean.endswith("/"):
+        return False
+    parts = clean.split("/")
+    if parts and parts[0].lower() == "dataiku":
+        parts = parts[1:]
+    if len(parts) < 3:
+        return False
+    if parts[1] == PROJECT_BUNDLES_SEGMENT:
+        return True
+    return LEGACY_ALLOW_FALLBACK
+
+
 def is_bundle_path(path, flow=None, is_folder_bundle=False):
     if not path:
         return False
@@ -204,8 +221,7 @@ def is_bundle_path(path, flow=None, is_folder_bundle=False):
     if flow == "NEW":
         return path.lower().endswith(NEW_FLOW_EXTENSIONS)
     if flow == "LEGACY":
-        clean = path.lstrip("/").rstrip("/")
-        return "/" in clean and not clean.endswith("/")
+        return _is_legacy_bundle_path(path)
     lowered = path.lower()
     if lowered.endswith(NEW_FLOW_EXTENSIONS):
         return True
@@ -363,7 +379,7 @@ def _make_record(meta, s3_path, creation_date, size_bytes, server,
         "is_folder_bundle": bool(is_folder_bundle),
         "child_count": int(child_count or 0),
         "creation_date": creation_date,
-        "size": round(float(size_bytes or 0) / MB_DIVISOR, 2),
+        "size_mb": round(float(size_bytes or 0) / MB_DIVISOR, 2),
     }
 
 
@@ -459,7 +475,12 @@ def _scan_s3(server):
 
 
 def _scan_cache_key(server):
-    return (server.get("hostname"), server.get("flow"), server.get("nickname"))
+    return (
+        server.get("hostname"),
+        server.get("flow"),
+        server.get("nickname"),
+        S3_FOLDER_NAME,
+    )
 
 
 def get_scan_records(server, force=False):
@@ -511,7 +532,9 @@ def _response_record(row, creation_date):
         "proyecto": row.get("proyecto", ""),
         "filename": row.get("filename") or row.get("bundle_name", ""),
         "fecha_creacion_s3": creation_date.strftime("%Y-%m-%d %H:%M:%S"),
-        "size": round(float(row.get("size") or 0), 2),
+        "size_mb": round(
+            float(row.get("size_mb") or row.get("size") or 0), 2
+        ),
         "source_folder": row.get("source_folder") or S3_FOLDER_NAME,
     }
 
@@ -567,6 +590,14 @@ def fetch_s3_bundles(cutoff_days=DEFAULT_CUTOFF_DAYS, server=None, force=False):
     server["scan_source"] = "live"
     server["scan_rows"] = len(records or [])
     server["cache_hit"] = cache_hit
+    server["folder"] = S3_FOLDER_NAME
+    server["can_authorize"] = bool(server.get("known"))
+    server["authorize_block_reason"] = (
+        ""
+        if server.get("can_authorize")
+        else "Servidor no identificado. Verifique la conexión y el hostname."
+    )
+    server["shared_pool"] = server.get("flow") == "LEGACY"
     return bundles, recent_bundles, warnings, server
 
 
@@ -604,9 +635,8 @@ def get_historical_records():
         return []
 
     for row in records:
-        current = row.get("size")
-        if current in (None, ""):
-            row["size"] = row.get("size_mb", 0)
+        if row.get("size_mb") in (None, ""):
+            row["size_mb"] = row.get("size", 0)
     return records
 
 
@@ -626,12 +656,12 @@ def api_scan_bundles():
     )
     historical = get_historical_records()
     historical_paths = {
-        str(h["s3_path"]).rstrip("/")
+        _norm_s3_path(h["s3_path"])
         for h in historical
         if "s3_path" in h and h["s3_path"] and historical_matches_server(h, server)
     }
     candidates = [
-        b for b in s3_bundles if str(b["s3_path"]).rstrip("/") not in historical_paths
+        b for b in s3_bundles if _norm_s3_path(b["s3_path"]) not in historical_paths
     ]
     recent_visible = [
         b
@@ -700,12 +730,18 @@ def api_get_historical():
         flow = meta["flow"] if meta else (stored_flow or server.get("flow"))
 
         if meta:
-            env = "UAT" if flow == "NEW" else "PROD"
+            env = meta.get("env") or (
+                "PROD" if flow == "LEGACY" else (server.get("environment") or "")
+            )
             nickname = meta["nickname"] if flow == "NEW" else server.get("hostname")
             proyecto = meta["proyecto"] or row.get("proyecto", "")
             filename = meta["filename"]
         else:
-            env = "UAT" if flow == "NEW" else ("PROD" if flow == "LEGACY" else "")
+            env = (
+                "PROD"
+                if flow == "LEGACY"
+                else (server.get("environment") or "")
+            )
             nickname = (
                 server.get("hostname", "")
                 if flow == "LEGACY"
@@ -724,7 +760,7 @@ def api_get_historical():
             "filename": filename,
             "fecha_creacion_s3": str(row.get("fecha_creacion_s3", "")),
             "fecha_periodo_limpieza": str(row.get("fecha_periodo_limpieza", "")),
-            "size": row.get("size", 0),
+            "size_mb": row.get("size_mb") or row.get("size") or 0,
             "estado": "Conservado",
             "source_folder": S3_FOLDER_NAME,
         })
@@ -757,8 +793,7 @@ def _ambiente_label(server):
 
 def _report_columns():
     return [
-        "ambiente" if c == "flow" else "size_mb" if c == "size" else c
-        for c in HISTORICAL_COLUMNS
+        "ambiente" if c == "flow" else c for c in HISTORICAL_COLUMNS
     ] + ["Estado"]
 
 
@@ -835,6 +870,32 @@ def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
     )
 
 
+def _norm_s3_path(path):
+    return "/" + str(path or "").lstrip("/").rstrip("/")
+
+
+def _delete_bundle_path(folder, path, is_folder_bundle=False):
+    clean = str(path or "").strip()
+    if not clean:
+        return
+    norm = "/" + clean.lstrip("/").rstrip("/")
+    if not is_folder_bundle:
+        folder.delete_path(norm)
+        return
+    prefix = norm + "/"
+    paths = folder.list_paths_in_partition() or []
+    targets = [
+        p
+        for p in paths
+        if _norm_s3_path(p) == norm or _norm_s3_path(p).startswith(prefix)
+    ]
+    if not targets:
+        folder.delete_path(norm)
+        return
+    for target in targets:
+        folder.delete_path(target)
+
+
 @app.route("/authorize-cleanup", methods=["POST"])
 def api_authorize_cleanup():
     fmt = _parse_report_format("xlsx")
@@ -864,6 +925,16 @@ def api_authorize_cleanup():
             }), 400
 
     server = detect_current_server()
+    if not server.get("known"):
+        return jsonify({
+            "status": "error",
+            "message": (
+                "Servidor no identificado. No se puede autorizar "
+                "la eliminación en S3."
+            ),
+            "server": server,
+        }), 409
+
     invalid_paths = [
         b.get("s3_path")
         for b in items
@@ -877,12 +948,59 @@ def api_authorize_cleanup():
             "paths": [str(p) for p in invalid_paths[:20]],
         }), 400
 
+    try:
+        records, _, _, _ = get_scan_records(server, force=False)
+    except Exception:
+        records = []
+    if not records:
+        try:
+            records, _, _, _ = get_scan_records(server, force=True)
+        except Exception:
+            records = []
+
+    scan_by_path = {}
+    for row in records or []:
+        row_path = _norm_s3_path(row.get("s3_path"))
+        if row.get("s3_path"):
+            scan_by_path[row_path] = row
+
+    unknown_paths = []
+    wrong_folder = []
+    for b in items:
+        sp = str(b.get("s3_path") or "")
+        if _norm_s3_path(sp) not in scan_by_path:
+            unknown_paths.append(sp)
+            continue
+        source_folder = b.get("source_folder")
+        if source_folder and source_folder != S3_FOLDER_NAME:
+            wrong_folder.append(sp)
+    if unknown_paths:
+        return jsonify({
+            "status": "error",
+            "message": (
+                "Hay bundles que no existen en el último escaneo de S3. "
+                "Actualice el escaneo e intente nuevamente."
+            ),
+            "server": server,
+            "paths": [str(p) for p in unknown_paths[:20]],
+        }), 409
+    if wrong_folder:
+        return jsonify({
+            "status": "error",
+            "message": "Hay bundles que no pertenecen al folder configurado.",
+            "server": server,
+            "paths": [str(p) for p in wrong_folder[:20]],
+        }), 400
+
     cutoff_date = datetime.now() - timedelta(days=DEFAULT_CUTOFF_DAYS)
     too_recent = []
     for b in items:
         if b.get("estado") != "Descartado":
             continue
-        creation_date = _coerce_item_date(b)
+        record = scan_by_path.get(_norm_s3_path(b.get("s3_path")))
+        creation_date = record.get("creation_date") if record else None
+        if creation_date is None:
+            creation_date = _coerce_item_date(b)
         if creation_date is None or creation_date >= cutoff_date:
             too_recent.append(b.get("s3_path"))
     if too_recent:
@@ -904,22 +1022,27 @@ def api_authorize_cleanup():
 
     for b in to_delete:
         try:
-            folder.delete_path(b["s3_path"])
+            record = scan_by_path.get(_norm_s3_path(b["s3_path"])) or {}
+            _delete_bundle_path(
+                folder,
+                b["s3_path"],
+                bool(record.get("is_folder_bundle")),
+            )
             b["Estado"] = "Eliminado"
         except Exception as e:
             b["Estado"] = f"Error: {str(e)}"
     for b in to_preserve:
         b["Estado"] = "Conservado"
 
-    delete_paths = {str(b["s3_path"]).rstrip("/") for b in to_delete}
+    delete_paths = {_norm_s3_path(b["s3_path"]) for b in to_delete}
     merged = {}
     for row in get_historical_records():
         sp = row.get("s3_path")
-        if sp and str(sp).rstrip("/") not in delete_paths:
-            merged[str(sp).rstrip("/")] = {k: row.get(k, "") for k in HISTORICAL_COLUMNS}
+        if sp and _norm_s3_path(sp) not in delete_paths:
+            merged[_norm_s3_path(sp)] = {k: row.get(k, "") for k in HISTORICAL_COLUMNS}
     for b in to_preserve:
         sp = b["s3_path"]
-        norm_sp = str(sp).rstrip("/")
+        norm_sp = _norm_s3_path(sp)
         merged[norm_sp] = {
             "id": b.get("id") or md5_of_path(sp),
             "s3_path": sp,
@@ -927,7 +1050,7 @@ def api_authorize_cleanup():
             "proyecto": b.get("proyecto", ""),
             "fecha_creacion_s3": b.get("fecha_creacion_s3", b.get("fecha_creacion", "")),
             "fecha_periodo_limpieza": current_period,
-            "size": b.get("size", b.get("size_mb", 0)),
+            "size_mb": b.get("size_mb") or b.get("size") or 0,
         }
     save_historical_records([merged[k] for k in sorted(merged)])
     _invalidate_scan_cache()
@@ -943,7 +1066,7 @@ def api_authorize_cleanup():
             "proyecto": b.get("proyecto", ""),
             "fecha_creacion_s3": b.get("fecha_creacion_s3", b.get("fecha_creacion", "")),
             "fecha_periodo_limpieza": current_period,
-            "size_mb": b.get("size", b.get("size_mb", 0)),
+            "size_mb": b.get("size_mb") or b.get("size") or 0,
             "Estado": b.get("Estado", b.get("estado", "")),
         })
 
@@ -993,7 +1116,7 @@ def api_global_report():
 
     historical = get_historical_records()
     historical_by_path = {
-        str(h["s3_path"]).rstrip("/"): h
+        _norm_s3_path(h["s3_path"]): h
         for h in historical
         if "s3_path" in h and h["s3_path"] and historical_matches_server(h, server)
     }
@@ -1003,7 +1126,7 @@ def api_global_report():
     rows = []
     for b in s3_bundles:
         sp = b["s3_path"]
-        norm_sp = str(sp).rstrip("/")
+        norm_sp = _norm_s3_path(sp)
         if norm_sp in historical_by_path:
             h = historical_by_path[norm_sp]
             rows.append({
@@ -1013,7 +1136,7 @@ def api_global_report():
                 "proyecto": h.get("proyecto", b["proyecto"]),
                 "fecha_creacion_s3": h.get("fecha_creacion_s3", b.get("fecha_creacion_s3", "")),
                 "fecha_periodo_limpieza": h.get("fecha_periodo_limpieza", ""),
-                "size_mb": h.get("size", b.get("size", 0)),
+                "size_mb": h.get("size_mb") or h.get("size") or b.get("size_mb") or b.get("size") or 0,
                 "Estado": "Conservado",
             })
         else:
@@ -1024,7 +1147,7 @@ def api_global_report():
                 "proyecto": b["proyecto"],
                 "fecha_creacion_s3": b.get("fecha_creacion_s3", ""),
                 "fecha_periodo_limpieza": current_period,
-                "size_mb": b.get("size", 0),
+                "size_mb": b.get("size_mb") or b.get("size") or 0,
                 "Estado": "Próximo a eliminar",
             })
 

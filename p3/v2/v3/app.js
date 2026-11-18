@@ -864,6 +864,8 @@ window.triggerGlobalReport = async function () {
       throw new Error(msg || `HTTP ${response.status}`);
     }
     const blob = await response.blob();
+    const s3Count = response.headers.get("X-Report-S3-Count");
+    const historicCount = response.headers.get("X-Report-Historic-Count");
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -873,9 +875,17 @@ window.triggerGlobalReport = async function () {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(downloadUrl);
-    $("#action-result").textContent = `Se generó el reporte global (${
-      format === "xlsx" ? "Excel" : "CSV"
-    }).`;
+    const histNum = Number(historicCount);
+    if (Number.isFinite(histNum) && histNum > 0) {
+      const s3Num = Number(s3Count);
+      $("#action-result").textContent = `Se generó el reporte global (${
+        Number.isFinite(s3Num) ? s3Num : 0
+      } de S3 · ${histNum} de histórico).`;
+    } else {
+      $("#action-result").textContent = `Se generó el reporte global (${
+        format === "xlsx" ? "Excel" : "CSV"
+      }).`;
+    }
   } catch (error) {
     console.error("Error en global-report:", error);
     const detail =

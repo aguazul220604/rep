@@ -797,7 +797,9 @@ def _report_columns():
     ] + ["Estado"]
 
 
-def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
+def _report_response(
+    rows, columns, base_name, fmt, sheet_name="Reporte", extra_headers=None
+):
     """Genera el reporte en CSV o XLSX con el mismo formato de hoja."""
     if fmt == "xlsx":
         try:
@@ -836,7 +838,7 @@ def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
                         cell.number_format = "#,##0.00"
 
             buffer.seek(0)
-            return send_file(
+            response = send_file(
                 buffer,
                 mimetype=(
                     "application/vnd.openxmlformats-officedocument"
@@ -845,6 +847,9 @@ def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
                 as_attachment=True,
                 download_name=f"{base_name}.xlsx",
             )
+            for key, value in (extra_headers or {}).items():
+                response.headers[key] = value
+            return response
         except Exception:
             app.logger.exception("No fue posible generar el archivo Excel.")
             return (
@@ -862,12 +867,15 @@ def _report_response(rows, columns, base_name, fmt, sheet_name="Reporte"):
     writer.writeheader()
     writer.writerows(rows)
     output.seek(0)
-    return send_file(
+    response = send_file(
         io.BytesIO(output.getvalue().encode("utf-8")),
         mimetype="text/csv",
         as_attachment=True,
         download_name=f"{base_name}.csv",
     )
+    for key, value in (extra_headers or {}).items():
+        response.headers[key] = value
+    return response
 
 
 def _norm_s3_path(path):
@@ -1124,9 +1132,11 @@ def api_global_report():
 
     columns = _report_columns()
     rows = []
+    seen_paths = set()
     for b in s3_bundles:
         sp = b["s3_path"]
         norm_sp = _norm_s3_path(sp)
+        seen_paths.add(norm_sp)
         if norm_sp in historical_by_path:
             h = historical_by_path[norm_sp]
             rows.append({
@@ -1151,6 +1161,35 @@ def api_global_report():
                 "Estado": "Próximo a eliminar",
             })
 
+    s3_count = len(rows)
+    for norm_sp, h in historical_by_path.items():
+        if norm_sp in seen_paths:
+            continue
+        sp = h.get("s3_path", "")
+        if not sp:
+            continue
+        seen_paths.add(norm_sp)
+        rows.append({
+            "id": h.get("id", ""),
+            "s3_path": sp,
+            "ambiente": _ambiente_label(server),
+            "proyecto": h.get("proyecto", ""),
+            "fecha_creacion_s3": h.get("fecha_creacion_s3", ""),
+            "fecha_periodo_limpieza": h.get("fecha_periodo_limpieza", ""),
+            "size_mb": h.get("size_mb") or h.get("size") or 0,
+            "Estado": "Histórico",
+        })
+    historic_count = len(rows) - s3_count
+
+    if not rows:
+        return (
+            jsonify({
+                "status": "error",
+                "message": "No hay registros en S3 ni en el histórico.",
+            }),
+            404,
+        )
+
     stamp = datetime.now().strftime("%Y%m%d")
     return _report_response(
         rows,
@@ -1158,4 +1197,8 @@ def api_global_report():
         f"Consulta_Global_S3_{stamp}",
         fmt,
         sheet_name="Consulta global",
+        extra_headers={
+            "X-Report-S3-Count": str(s3_count),
+            "X-Report-Historic-Count": str(historic_count),
+        },
     )

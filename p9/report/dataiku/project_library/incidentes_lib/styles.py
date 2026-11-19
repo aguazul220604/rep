@@ -63,6 +63,25 @@ body {
   flex: 0 0 auto;
 }
 
+.brand-logo-css {
+  width: 60px;
+  height: 60px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--red);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.14);
+}
+
+.brand-logo-letter {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .brand-text h1 {
   margin: 0;
   font-size: 24px;
@@ -816,9 +835,14 @@ body {
     padding: 22px 20px 32px;
   }
 
-  .brand-logo {
+  .brand-logo,
+  .brand-logo-css {
     width: 50px;
     height: 50px;
+  }
+
+  .brand-logo-letter {
+    font-size: 28px;
   }
 
   .brand-text h1 {

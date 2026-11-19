@@ -61,7 +61,7 @@ DIAS_ES = [
 
 DASH_OUTPUT_COUNT = 20
 MAIN_OUTPUT_COUNT = 24
-CACHE: Dict[str, Any] = {"run_id": None, "frame": None}
+CACHE: Dict[str, Any] = {"job_id": None, "frame": None}
 
 INDEX_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -153,10 +153,12 @@ def build_layout():
             html.Div(
                 className="brand",
                 children=[
-                    html.Img(
-                        src=styles.LOGO_DATA_URI,
-                        className="brand-logo",
-                        alt="Banamex",
+                    html.Div(
+                        className="brand-logo-css",
+                        title="Banamex",
+                        children=[
+                            html.Span("B", className="brand-logo-letter")
+                        ],
                     ),
                     html.Div(
                         className="brand-text",
@@ -684,20 +686,53 @@ def _upload_and_start(contents: str, filename: str) -> Tuple[Dict[str, Any], str
     )
 
     project = _get_project()
-    scenario = project.get_scenario(config.SCENARIO_ID)
-    trigger = scenario.run()
-    run = trigger.wait_for_scenario_run(no_fail=True)
-    if run is None:
-        raise RuntimeError(
-            "El escenario no pudo iniciarse. Verifica que no haya otro run activo."
+    try:
+        builder = project.new_job(config.BUILD_JOB_TYPE)
+        builder.with_output(config.OUTPUT_DATASET, object_type="DATASET")
+        builder.with_output(config.STATUS_DATASET, object_type="DATASET")
+        job = builder.start()
+    except (AttributeError, TypeError):
+        job = project.get_dataset(config.OUTPUT_DATASET).build(
+            job_type=config.BUILD_JOB_TYPE,
+            wait=False,
         )
-    return pointer, run.id
+    return pointer, job.id
+
+
+def _job_state(status: Dict[str, Any]) -> str:
+    base = status.get("baseStatus") or {}
+    state = base.get("state") or status.get("state") or ""
+    return str(state).upper()
+
+
+def _job_error_message(job, state: str, store: Dict[str, Any]) -> str:
+    status = _read_status() or {}
+    if (
+        str(status.get("status") or "").upper() == "FAILED"
+        and status.get("file_path") == store.get("upload_path")
+    ):
+        return status.get("message") or "El procesamiento falló."
+
+    message = "El job de Dataiku terminó con estado {}. Job: {}.".format(
+        state, store.get("job_id")
+    )
+    try:
+        log = job.get_log() or ""
+        lines = [line.strip() for line in log.splitlines() if line.strip()]
+        if lines:
+            message += " Último mensaje: {}".format(lines[-1][:500])
+    except Exception:
+        pass
+    return message
 
 
 def _read_status() -> Optional[Dict[str, Any]]:
     import dataiku
 
-    frame = dataiku.Dataset(config.STATUS_DATASET).get_dataframe()
+    try:
+        frame = dataiku.Dataset(config.STATUS_DATASET).get_dataframe()
+    except Exception:
+        return None
     if frame.empty:
         return None
     row = frame.iloc[-1].to_dict()
@@ -742,23 +777,23 @@ def _read_output() -> pd.DataFrame:
     return _normalize_output(frame)
 
 
-def _cache_set(run_id: str, frame: pd.DataFrame) -> None:
-    CACHE["run_id"] = run_id
+def _cache_set(job_id: str, frame: pd.DataFrame) -> None:
+    CACHE["job_id"] = job_id
     CACHE["frame"] = frame
 
 
-def _cache_get(run_id: Optional[str]) -> Optional[pd.DataFrame]:
-    if run_id and CACHE.get("run_id") == run_id:
+def _cache_get(job_id: Optional[str]) -> Optional[pd.DataFrame]:
+    if job_id and CACHE.get("job_id") == job_id:
         return CACHE.get("frame")
     return None
 
 
 def _load_cached_or_dataset(store: Dict[str, Any]) -> pd.DataFrame:
-    frame = _cache_get(store.get("scenario_run_id"))
+    frame = _cache_get(store.get("job_id"))
     if frame is not None:
         return frame
     frame = _read_output()
-    _cache_set(store.get("scenario_run_id"), frame)
+    _cache_set(store.get("job_id"), frame)
     return frame
 
 
@@ -933,14 +968,14 @@ def register_callbacks(dash_app) -> None:
                     "Selecciona un archivo CSV o XLSX antes de continuar.", store
                 )
             try:
-                pointer, run_id = _upload_and_start(contents, filename)
+                pointer, job_id = _upload_and_start(contents, filename)
             except Exception as exc:
                 return _error_outputs(
                     "No se pudo iniciar el procesamiento: {}".format(exc), store
                 )
             new_store = {
                 "status": "running",
-                "scenario_run_id": run_id,
+                "job_id": job_id,
                 "file_name": pointer.get("original_name"),
                 "upload_path": pointer.get("path"),
                 "started_at_epoch": time.time(),
@@ -960,34 +995,38 @@ def register_callbacks(dash_app) -> None:
             if store.get("status") != "running":
                 return _no_updates(MAIN_OUTPUT_COUNT)
             started = store.get("started_at_epoch") or 0
-            if time.time() - started > config.SCENARIO_TIMEOUT_SECONDS:
+            if time.time() - started > config.JOB_TIMEOUT_SECONDS:
                 return _error_outputs(
                     "El procesamiento excedió el tiempo máximo de espera. "
-                    "Revisa el escenario en Dataiku.",
+                    "Revisa el job {} en Dataiku.".format(store.get("job_id")),
                     store,
                 )
             try:
                 project = _get_project()
-                scenario = project.get_scenario(config.SCENARIO_ID)
-                run = scenario.get_run(store.get("scenario_run_id"))
-                run.refresh()
+                job = project.get_job(store.get("job_id"))
+                job_status = job.get_status()
+                state = _job_state(job_status)
             except Exception as exc:
                 return _error_outputs(
-                    "No se pudo consultar el escenario: {}".format(exc), store
+                    "No se pudo consultar el job de Dataiku: {}".format(exc), store
                 )
-            if run.running:
+            if state not in ("DONE", "FAILED", "ABORTED"):
                 return _running_outputs()
+            if state != "DONE":
+                return _error_outputs(
+                    _job_error_message(job, state, store), store
+                )
             try:
-                outcome = run.outcome
                 status = _read_status() or {}
                 status_code = str(status.get("status") or "").upper()
-                if status_code == "FAILED" or outcome not in ("SUCCESS", "WARNING"):
-                    message = status.get("message") or (
-                        "El procesamiento terminó con estado {}.".format(outcome)
-                    )
+                status_matches = status.get("file_path") == store.get(
+                    "upload_path"
+                )
+                if status_code == "FAILED" and status_matches:
+                    message = status.get("message") or "El procesamiento falló."
                     return _error_outputs(message, store)
                 frame = _read_output()
-                _cache_set(store.get("scenario_run_id"), frame)
+                _cache_set(store.get("job_id"), frame)
                 new_store = dict(store)
                 new_store["status"] = "done"
                 new_store["finished_at"] = datetime.now().isoformat(

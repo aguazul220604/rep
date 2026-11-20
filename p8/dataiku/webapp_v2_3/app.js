@@ -298,7 +298,9 @@ function renderDeepResult() {
   const result = state.deepResult;
   const countText = (value) =>
     Number(value || 0).toLocaleString("es-MX");
-  const entities = Array.isArray(result.entities) ? result.entities : [];
+  const entities = (
+    Array.isArray(result.entities) ? result.entities : []
+  ).filter((entity) => Number(entity.distribution_rate || 0) > 0);
   const rows = entities
     .map((entity) => {
       const classification =
@@ -311,11 +313,9 @@ function renderDeepResult() {
             ? ' <span class="status-badge success">Validador</span>'
             : ""
         }</td>` +
-        `<td>${escapeHtml(entity.group || "—")}</td>` +
         `<td>${escapeHtml(classification)}</td>` +
         `<td>${pctText(entity.distribution_rate)}</td>` +
         `<td>${pctText(entity.coverage_rate)}</td>` +
-        `<td class="prob-num">${countText(entity.cells)}</td>` +
         `</tr>`
       );
     })
@@ -359,7 +359,7 @@ function renderDeepResult() {
       : "") +
     (entities.length
       ? `<div class="table-wrap"><table class="table deep-table" aria-label="Distribución de entidades PII">` +
-        `<thead><tr><th>Entidad</th><th>Grupo</th><th>Clasificación</th><th>% celdas PII</th><th>Cobertura</th><th>Celdas</th></tr></thead>` +
+        `<thead><tr><th>Entidad</th><th>Clasificación</th><th>% celdas PII</th><th>Cobertura</th></tr></thead>` +
         `<tbody>${rows}</tbody></table></div>`
       : '<p class="field-note">No se detectó PII por contenido en las filas escaneadas.</p>') +
     `<p class="field-note">La distribución suma 100% de las celdas PII. La cobertura se calcula sobre celdas no vacías; una celda puede coincidir con más de una entidad.</p>`;

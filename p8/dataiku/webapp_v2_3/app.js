@@ -233,8 +233,8 @@ function showDeepError(message) {
 
 function deepEmptyMessage(column) {
   return (
-    `La columna “${column.name}” no contiene valores (está vacía o todos sus valores son nulos). ` +
-    "El análisis profundo necesita al menos un dato para calcular la cobertura y la distribución de entidades."
+    `La columna “${column.name}” no contiene valores (está vacía o la totalidad de sus valores son nulos). ` +
+    "El análisis profundo requiere al menos un dato para calcular la cobertura y la distribución de entidades."
   );
 }
 
@@ -249,7 +249,7 @@ function renderDeepControls() {
   const previousColumn = state.deepColumn;
 
   tableSelect.innerHTML =
-    '<option value="">Seleccione tabla…</option>' +
+    '<option value="">Seleccione una tabla…</option>' +
     entries
       .map(
         (entry) =>
@@ -278,7 +278,7 @@ function renderDeepControls() {
   }
 
   columnSelect.innerHTML =
-    '<option value="">Seleccione columna…</option>' +
+    '<option value="">Seleccione una columna…</option>' +
     columns
       .map(
         (col) =>
@@ -313,7 +313,7 @@ function renderDeepResult() {
 
   if (state.deepBusy) {
     container.innerHTML =
-      '<p class="field-note">Analizando el 100% de la columna seleccionada…</p>';
+      '<p class="field-note">Analizando la totalidad de la columna seleccionada…</p>';
     return;
   }
 
@@ -522,9 +522,10 @@ async function handleDeepAnalyze() {
       state.deepError = deepEmptyMessage(column);
     } else if (raw === "Failed to fetch") {
       state.deepError =
-        "No se pudo conectar con el servidor para el análisis profundo. Intente de nuevo.";
+        "No fue posible establecer conexión con el servidor para ejecutar el análisis profundo. Intente nuevamente.";
     } else {
-      state.deepError = raw || "Error desconocido en el análisis profundo.";
+      state.deepError =
+        raw || "Se produjo un error no identificado en el análisis profundo.";
     }
     showDeepError(state.deepError);
   } finally {
@@ -663,7 +664,7 @@ function renderIndex() {
     (f) => !q || String(f).toLowerCase().includes(q),
   );
   if (!files.length) {
-    el.innerHTML = `<p class="transfer-result mono">Ningún archivo coincide con los filtros aplicados.</p>`;
+    el.innerHTML = `<p class="transfer-result mono">Ningún archivo coincide con los criterios de filtrado.</p>`;
     return;
   }
   for (const f of files) {
@@ -675,13 +676,13 @@ function renderIndex() {
     card.type = "button";
     card.className = "file-card";
     card.dataset.file = f;
-    card.setAttribute("aria-label", `Ver tabla de ${f}`);
+    card.setAttribute("aria-label", `Consultar la tabla de ${f}`);
     card.innerHTML =
       `<span class="file-card-name">${escapeHtml(f)}</span>` +
-      `<span class="file-card-meta">${s.total} cols · ${s.pii} PII (${s.pct}%)</span>` +
+      `<span class="file-card-meta">${s.total} columnas · ${s.pii} PII (${s.pct}%)</span>` +
       `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>` +
-      `<span class="file-card-top">Top: ${escapeHtml(topTxt)}</span>` +
-      `<span class="file-card-cta">Ver tabla →</span>`;
+      `<span class="file-card-top">Principales entidades: ${escapeHtml(topTxt)}</span>` +
+      `<span class="file-card-cta">Consultar tabla →</span>`;
     el.append(card);
   }
 }
@@ -700,9 +701,9 @@ function renderFileHead() {
     : "—";
   el.hidden = false;
   el.innerHTML =
-    `<button type="button" class="link-back" data-file="${ALL}">← Todos los archivos</button>` +
+    `<button type="button" class="link-back" data-file="${ALL}">← Regresar a todos los archivos</button>` +
     `<div><strong>${escapeHtml(s.file)}</strong>` +
-    `<span class="file-card-meta"> · ${s.total} cols · ${s.pii} PII (${s.pct}%) · Top: ${escapeHtml(topTxt)}</span></div>` +
+    `<span class="file-card-meta"> · ${s.total} columnas · ${s.pii} PII (${s.pct}%) · Principales entidades: ${escapeHtml(topTxt)}</span></div>` +
     `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>`;
 }
 
@@ -725,7 +726,7 @@ function renderEntityOptions() {
   sel.textContent = "";
   const all = document.createElement("option");
   all.value = "";
-  all.textContent = "Todas";
+  all.textContent = "Todas las entidades";
   sel.append(all);
   for (const e of scoped) {
     const o = document.createElement("option");
@@ -745,7 +746,7 @@ function renderClassificationOptions() {
   sel.textContent = "";
   const all = document.createElement("option");
   all.value = "";
-  all.textContent = "Todas";
+  all.textContent = "Todas las clasificaciones";
   sel.append(all);
   for (const [value, label] of scoped) {
     const o = document.createElement("option");
@@ -778,7 +779,7 @@ function renderTable() {
       tableHead.textContent = "";
     }
     info.textContent =
-      "Se requiere seleccionar un archivo para visualizar su tabla completa.";
+      "Es necesario seleccionar un archivo para consultar su tabla completa.";
     return;
   }
   wrap.hidden = false;
@@ -968,7 +969,7 @@ function updateFileHint() {
     rm.type = "button";
     rm.className = "file-remove";
     rm.dataset.idx = String(i);
-    rm.setAttribute("aria-label", `Quitar ${f.name}`);
+    rm.setAttribute("aria-label", `Eliminar ${f.name}`);
     rm.textContent = "×";
     li.append(name, rm);
     list.append(li);
@@ -1027,7 +1028,7 @@ async function onSubmit(e) {
   $("#upload-result").textContent = "";
   const input = $("#datasetFile");
   if (!input.files || !input.files.length) {
-    showAlert("Se requiere seleccionar al menos un archivo CSV o Excel.");
+    showAlert("Es necesario seleccionar al menos un archivo CSV o Excel.");
     input.focus();
     return;
   }
@@ -1074,7 +1075,9 @@ async function onSubmit(e) {
     if (msgs.length) showAlert(msgs.join(" | "), "warn");
   } catch (err) {
     $("#upload-result").textContent = "";
-    showAlert(err.message || "Error desconocido al procesar las tablas.");
+    showAlert(
+      err.message || "Se produjo un error no identificado al procesar los archivos.",
+    );
   } finally {
     setBusy(false);
   }
@@ -1217,7 +1220,7 @@ function safeBase(name) {
 
 function handleExportFile(fmt = "csv") {
   if (!state.columns.length) {
-    showAlert("Se debe analizar al menos una tabla antes de exportar.");
+    showAlert("Es necesario analizar al menos una tabla antes de exportar.");
     return;
   }
   if (isIndexView()) return;
@@ -1236,7 +1239,7 @@ function handleExportFile(fmt = "csv") {
 function handleGenerateReport(fmt = "csv") {
   if (!state.columns.length) {
     showAlert(
-      "Se debe analizar al menos una tabla antes de generar el reporte.",
+      "Es necesario analizar al menos una tabla antes de generar el reporte.",
     );
     return;
   }

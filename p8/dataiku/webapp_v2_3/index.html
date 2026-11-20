@@ -1460,15 +1460,17 @@
             <p class="howto-intro">
               Esta solución permite detectar e identificar datos de información
               personal (PII) en los archivos cargados y propone una clasificación
-              para apoyar su revisión y gobierno. El objetivo es saber qué datos
-              personales contiene un archivo, en qué columnas están y qué nivel de
-              protección requieren, para poder tratarlos de forma consistente.
+              para apoyar su revisión y gobierno. El objetivo es determinar qué
+              datos personales contiene un archivo, en qué columnas se ubican y
+              qué nivel de protección requieren, a fin de aplicarles un
+              tratamiento consistente.
             </p>
             <p class="howto-intro">
               El análisis combina el nombre de cada columna con una muestra de sus
-              valores porque cada señal por separado es incompleta: el nombre es
-              rápido y explicable, pero ambiguo; el contenido confirma o descarta
-              la sospecha y detecta PII en columnas con nombres genéricos.
+              valores, dado que cada señal, considerada por separado, resulta
+              incompleta: el nombre es inmediato y explicable, aunque ambiguo; el
+              contenido confirma o descarta la sospecha y detecta PII en columnas
+              con nombres genéricos.
             </p>
             <ol class="howto-steps">
               <li>
@@ -1498,18 +1500,18 @@
               </li>
             </ol>
             <div class="howto-why">
-              <h3 class="howto-subtitle">¿Por qué se analiza así?</h3>
+              <h3 class="howto-subtitle">Justificación del enfoque de análisis</h3>
               <ul class="howto-reasons">
                 <li>
-                  <strong>Nombre + contenido</strong>: el nombre de la columna es
-                  una pista rápida y explicable, pero puede ser ambigua; el
-                  contenido confirma o descarta la sospecha y permite detectar
-                  PII en columnas con nombres genéricos.
+                  <strong>Nombre + contenido</strong>: el nombre de la columna
+                  constituye una referencia inmediata y explicable, aunque puede
+                  resultar ambiguo; el contenido confirma o descarta la sospecha y
+                  permite detectar PII en columnas con nombres genéricos.
                 </li>
                 <li>
                   <strong>Muestra de valores</strong>: se analiza una muestra
-                  representativa de valores únicos no nulos, no todos los
-                  registros, para estimar el tipo de dato con eficiencia y sin
+                  representativa de valores únicos no nulos, no la totalidad de
+                  los registros, para estimar el tipo de dato con eficiencia y sin
                   exponer más información de la necesaria.
                 </li>
                 <li>
@@ -1519,17 +1521,18 @@
                   contenido se marcan para validación humana.
                 </li>
                 <li>
-                  <strong>Clasificación por nivel</strong>: traducir la entidad
-                  detectada a un nivel de información (público, interno,
-                  confidencial, sensible o restringido) permite aplicar
-                  controles proporcionales al riesgo.
+                  <strong>Clasificación por nivel</strong>: la conversión de la
+                  entidad detectada en un nivel de información (público, interno,
+                  confidencial, sensible o restringido) permite aplicar controles
+                  proporcionales al riesgo.
                 </li>
               </ul>
               <p class="field-note">
-                Esta herramienta apoya la revisión y el gobierno de la
-                información: es orientativa y no define por sí misma políticas de
-                retención o tratamiento. El análisis profundo mide la prevalencia
-                de PII en una columna y no reemplaza el veredicto principal.
+                Esta herramienta contribuye a la revisión y al gobierno de la
+                información; tiene carácter orientativo y no define por sí misma
+                políticas de retención o tratamiento. El análisis profundo mide la
+                prevalencia de PII en una columna y no sustituye el veredicto
+                principal.
               </p>
             </div>
             <div class="howto-audit">
@@ -1597,7 +1600,7 @@
                 <tr>
                   <th scope="row">Revisión</th>
                   <td>
-                    Señala las columnas de baja confianza o sin contenido que
+                    Indica las columnas de baja confianza o sin contenido que
                     requieren validación humana.
                   </td>
                 </tr>
@@ -1611,7 +1614,7 @@
                   </td>
                 </tr>
                 <tr class="is-audit-only">
-                  <th scope="row">Prob. entidad</th>
+                  <th scope="row">Probabilidad de entidad</th>
                   <td>Confianza de la entidad detectada (0–100%).</td>
                 </tr>
                 <tr class="is-audit-only">
@@ -1708,8 +1711,8 @@
               placeholder="Filtrar por nombre de archivo…"
             />
             <span class="field-note"
-              >Filtro por nombre de archivo. Si se deja vacío, se muestran
-              todos los archivos.</span
+              >Filtro por nombre de archivo. Si el campo se deja vacío, se
+              muestran todos los archivos.</span
             >
           </div>
         </div>
@@ -1729,7 +1732,7 @@
           >
             <label class="field-label" for="in-entity">Entidad</label>
             <select class="select mono" id="in-entity">
-              <option value="">Todas</option>
+              <option value="">Todas las entidades</option>
             </select>
           </div>
           <div class="field" style="flex: 1 1 180px; margin-bottom: 0">
@@ -1737,7 +1740,7 @@
               >Clasificación</label
             >
             <select class="select mono" id="in-classification">
-              <option value="">Todas</option>
+              <option value="">Todas las clasificaciones</option>
             </select>
           </div>
           <div
@@ -1747,15 +1750,15 @@
             <div class="choice-row">
               <label class="choice"
                 ><input type="checkbox" id="in-only-pii" />
-                <span>Solo PII</span></label
+                <span>Únicamente PII</span></label
               >
               <label class="choice"
                 ><input type="checkbox" id="in-only-review" />
-                <span>Solo con revisión</span></label
+                <span>Únicamente con revisión</span></label
               >
               <label class="choice"
                 ><input type="checkbox" id="in-only-empty" />
-                <span>Solo sin contenido</span></label
+                <span>Únicamente sin contenido</span></label
               >
             </div>
           </div>
@@ -1789,7 +1792,7 @@
                 </th>
                 <th
                   scope="col"
-                  title="Señala columnas de baja confianza o sin contenido que requieren validación"
+                  title="Indica las columnas de baja confianza o sin contenido que requieren validación"
                 >
                   Revisión
                 </th>
@@ -1804,7 +1807,7 @@
                   class="col-audit"
                   title="Confianza de la entidad detectada"
                 >
-                  Prob. entidad
+                  Probabilidad de entidad
                 </th>
                 <th
                   scope="col"
@@ -1824,7 +1827,7 @@
             </thead>
             <tbody id="piiListBody">
               <tr>
-                <td colspan="9">Sin información analizada por el momento</td>
+                <td colspan="9">Sin información analizada hasta el momento</td>
               </tr>
             </tbody>
           </table>
@@ -1838,7 +1841,7 @@
         </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>
         <div class="dl-box" id="fileExportRow">
-          <p class="dl-title">Descargar resultados del análisis</p>
+          <p class="dl-title">Descargar los resultados del análisis</p>
           <p class="dl-sub mono" id="fileExportName" aria-live="polite"></p>
           <div class="dl-controls">
             <select
@@ -1847,13 +1850,13 @@
               aria-label="Seleccionar formato de descarga"
               hidden
             >
-              <option value="">Descargar…</option>
+              <option value="">Seleccione un formato de descarga…</option>
               <option value="csv">Descargar CSV (.csv)</option>
               <option value="xlsx">Descargar Excel (.xlsx)</option>
             </select>
           </div>
           <span class="field-note"
-            >Los filtros se aplican a la descarga</span
+            >Los filtros aplicados se reflejan en la descarga.</span
           >
         </div>
         <footer class="slip-foot">
@@ -1870,7 +1873,7 @@
         </header>
         <div class="dl-box">
           <p class="dl-title">
-            Descargar resultados del análisis — todas las tablas
+            Descargar los resultados del análisis de todas las tablas
           </p>
           <p class="dl-sub mono" id="reportSummary" aria-live="polite"></p>
           <div class="dl-controls">
@@ -1879,14 +1882,14 @@
               id="selReportFmt"
               aria-label="Seleccionar formato de descarga del reporte global"
             >
-              <option value="">Descargar reporte global…</option>
+              <option value="">Seleccione un formato para el reporte global…</option>
               <option value="csv">Descargar reporte global en CSV (.csv)</option>
               <option value="xlsx">
                 Descargar reporte global en Excel (.xlsx)
               </option>
             </select>
           </div>
-          <span class="field-note">Incluye todos los archivos</span>
+          <span class="field-note">Incluye la totalidad de los archivos.</span>
         </div>
         <footer class="slip-foot">
           <span>Reporte PII global</span>
@@ -1897,8 +1900,8 @@
           <summary class="slip-head slip-summary">
             <h2 class="slip-title" id="t-deep">Análisis profundo de columna</h2>
             <span class="slip-subtitle">
-              Analiza el 100% del contenido de una sola columna y reporta la
-              cobertura y distribución de entidades PII detectadas.
+              Analiza la totalidad del contenido de una sola columna y reporta
+              la cobertura y la distribución de las entidades PII detectadas.
             </span>
             <span class="slip-head-side">
               <span class="slip-ref">PII 04</span>
@@ -1927,13 +1930,13 @@
                   >Tabla / archivo</label
                 >
                 <select class="select mono" id="deep-table">
-                  <option value="">Seleccione tabla…</option>
+                  <option value="">Seleccione una tabla…</option>
                 </select>
               </div>
               <div class="field deep-field">
                 <label class="field-label" for="deep-column">Columna</label>
                 <select class="select mono" id="deep-column">
-                  <option value="">Seleccione columna…</option>
+                  <option value="">Seleccione una columna…</option>
                 </select>
               </div>
               <div class="field deep-action">
@@ -1954,10 +1957,10 @@
             <div id="deep-result" class="deep-result" aria-live="polite"></div>
             <p class="field-note">
               El análisis profundo es informativo y no modifica los resultados
-              principales. Se procesa una columna a la vez y solo se devuelven
-              agregados, sin valores crudos. Requiere que la columna tenga
-              contenido; si está vacía o todos sus valores son nulos, no se
-              calculan cobertura ni distribución.
+              principales. Se procesa una columna a la vez y únicamente se
+              devuelven agregados, sin valores originales. Requiere que la columna
+              tenga contenido; si está vacía o la totalidad de sus valores son
+              nulos, no se calculan la cobertura ni la distribución.
             </p>
           </div>
         </details>
@@ -1978,8 +1981,8 @@
         <span class="loading-spinner" aria-hidden="true"></span>
         <p class="loading-title">Analizando conjunto de datos…</p>
         <p class="loading-sub">
-          Se están detectando y clasificando datos PII. El proceso puede tardar
-          unos segundos.
+          Se están detectando y clasificando datos PII. Es posible que el proceso
+          demore algunos segundos.
         </p>
         <div class="loading-bar" aria-hidden="true"><span></span></div>
       </div>

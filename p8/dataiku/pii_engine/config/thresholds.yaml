@@ -36,6 +36,7 @@ name_resolution:
     clabe: 0.95
     cvv: 0.95
     coordenadas: 0.93
+    fecha_vencimiento: 0.90
 
 fusion:
   # Ecuación logit calibrada:

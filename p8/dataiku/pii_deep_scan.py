@@ -40,6 +40,7 @@ class DeepScanOptions:
     max_rows: Optional[int] = 500_000
     chunk_size: int = 50_000
     include_model: bool = True
+    include_name_only: bool = True
 
 
 @dataclass
@@ -348,7 +349,11 @@ def scan_column_chunks(
     if registry is None:
         raise ValueError("El analizador no expone un registry de recognizers")
 
-    recognizers = list(registry.get_scannable_recognizers())
+    recognizers = list(
+        registry.get_scannable_recognizers(
+            include_name_only=opts.include_name_only
+        )
+    )
     if not opts.include_model:
         recognizers = [
             recognizer
@@ -508,6 +513,13 @@ def scan_column_chunks(
         if result.non_empty_values
         else 0.0
     )
+
+    if result.total_rows == 0:
+        result.warnings.append("La columna no contiene filas para analizar.")
+    elif result.non_empty_values == 0:
+        result.warnings.append(
+            "La columna no contiene valores no vacíos para analizar."
+        )
 
     findings: List[EntityFinding] = []
     for index, recognizer in enumerate(recognizers):

@@ -786,6 +786,23 @@ class TestNameResolutionOptimizations(unittest.TestCase):
         self.assertGreaterEqual(res.score_name, 0.95)
         self.assertEqual(res.source, "rules")
 
+    def test_fecha_vencimiento_empty_column_is_pii_with_review(self):
+        class LowBinary:
+            def predict_proba(self, X):
+                return np.asarray([[0.96, 0.04] for _ in X])
+
+        engine = PIIAnalyzer(
+            binary_model_bundle={"model": LowBinary(), "threshold": 0.409}
+        )
+        df = pd.DataFrame({"fecha_vencimiento": pd.Series([], dtype=object)})
+        result = engine.analyze(df, table_meta="tabla_vencimiento_vacia")[0]
+
+        self.assertTrue(result.pii)
+        self.assertEqual(result.entity, "fecha_vencimiento")
+        self.assertEqual(result.evidence, "name")
+        self.assertEqual(result.sample_size, 0)
+        self.assertTrue(result.needs_review)
+
     def test_content_model_single_pass_and_model_version(self):
         class CountingContent:
             classes_ = np.array(["apellido", "direccion", "empresa", "nombre", "otro"])

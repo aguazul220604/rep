@@ -231,6 +231,13 @@ function showDeepError(message) {
   box.hidden = false;
 }
 
+function deepEmptyMessage(column) {
+  return (
+    `La columna “${column.name}” no contiene valores (está vacía o todos sus valores son nulos). ` +
+    "El análisis profundo necesita al menos un dato para calcular la cobertura y la distribución de entidades."
+  );
+}
+
 function renderDeepControls() {
   const tableSelect = $("#deep-table");
   const columnSelect = $("#deep-column");
@@ -459,6 +466,12 @@ async function handleDeepAnalyze() {
     return;
   }
 
+  if (isEmptyContent(column)) {
+    state.deepResult = null;
+    showDeepError(deepEmptyMessage(column));
+    return;
+  }
+
   const file = findDeepFile(entry);
   if (!file) {
     showDeepError(
@@ -504,7 +517,15 @@ async function handleDeepAnalyze() {
       classification: column.information_classification_label || "",
     };
   } catch (error) {
-    state.deepError = error.message || "Error desconocido en el análisis profundo.";
+    const raw = error && error.message ? error.message : "";
+    if (isEmptyContent(column)) {
+      state.deepError = deepEmptyMessage(column);
+    } else if (raw === "Failed to fetch") {
+      state.deepError =
+        "No se pudo conectar con el servidor para el análisis profundo. Intente de nuevo.";
+    } else {
+      state.deepError = raw || "Error desconocido en el análisis profundo.";
+    }
     showDeepError(state.deepError);
   } finally {
     state.deepBusy = false;

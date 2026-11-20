@@ -201,12 +201,18 @@ class RecognizerRegistry:
                     return version
         return None
 
-    def get_scannable_recognizers(self, exclude_entity: Optional[str] = None) -> List[Recognizer]:
+    def get_scannable_recognizers(
+        self,
+        exclude_entity: Optional[str] = None,
+        include_name_only: bool = False,
+    ) -> List[Recognizer]:
         """
         Devuelve los Recognizers candidatos para un escaneo de contenido (Sección 5.3 nodo K).
         Excluye:
           - Clasificación 2 (`otro_pii`)
-          - Entidades marcadas como `name_only` (`cvv`, `pin_nip`, `saldo`, `credito`, `biometrico`)
+          - Entidades marcadas como `name_only` (`cvv`, `pin_nip`, `saldo`, `credito`, `biometrico`),
+            salvo que `include_name_only=True`. En ese caso el escáner debe validar el
+            contexto del nombre de la columna para cada entidad.
         Ordena primero Grupo A (señal fuerte), luego Grupo C, D y B.
         """
         group_order = {"A": 0, "C": 1, "D": 2, "B": 3, "E": 4}
@@ -215,7 +221,7 @@ class RecognizerRegistry:
             for name, rec in self.recognizers.items()
             if name != exclude_entity
             and rec.classification == 1
-            and not rec.is_name_only
+            and (include_name_only or not rec.is_name_only)
         ]
         candidates.sort(key=lambda r: group_order.get(r.group, 9))
         return candidates

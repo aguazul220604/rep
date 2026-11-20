@@ -1799,6 +1799,35 @@
           >
         </footer>
       </article>
+      <article class="slip" id="article-report" aria-labelledby="t-rep" hidden>
+        <header class="slip-head">
+          <h2 class="slip-title" id="t-rep">Reporte global</h2>
+          <p class="slip-ref">PII 03</p>
+        </header>
+        <div class="dl-box">
+          <p class="dl-title">
+            Descargar resultados del análisis — todas las tablas
+          </p>
+          <p class="dl-sub mono" id="reportSummary" aria-live="polite"></p>
+          <div class="dl-controls">
+            <select
+              class="select mono dl-select dl-trigger"
+              id="selReportFmt"
+              aria-label="Seleccionar formato de descarga del reporte global"
+            >
+              <option value="">Descargar reporte global…</option>
+              <option value="csv">Descargar reporte global en CSV (.csv)</option>
+              <option value="xlsx">
+                Descargar reporte global en Excel (.xlsx)
+              </option>
+            </select>
+          </div>
+          <span class="field-note">Incluye todos los archivos</span>
+        </div>
+        <footer class="slip-foot">
+          <span>Reporte PII global</span>
+        </footer>
+      </article>
       <article class="slip" id="article-deep" aria-labelledby="t-deep">
         <details class="slip-details" id="deepDetails">
           <summary class="slip-head slip-summary">
@@ -1808,7 +1837,7 @@
               cobertura y distribución de entidades PII detectadas.
             </span>
             <span class="slip-head-side">
-              <span class="slip-ref">PII 03</span>
+              <span class="slip-ref">PII 04</span>
               <svg
                 class="slip-chevron"
                 width="16"
@@ -1868,35 +1897,6 @@
         </details>
         <footer class="slip-foot">
           <span>Validación de contenido completo por columna</span>
-        </footer>
-      </article>
-      <article class="slip" id="article-report" aria-labelledby="t-rep" hidden>
-        <header class="slip-head">
-          <h2 class="slip-title" id="t-rep">Reporte global</h2>
-          <p class="slip-ref">PII 04</p>
-        </header>
-        <div class="dl-box">
-          <p class="dl-title">
-            Descargar resultados del análisis — todas las tablas
-          </p>
-          <p class="dl-sub mono" id="reportSummary" aria-live="polite"></p>
-          <div class="dl-controls">
-            <select
-              class="select mono dl-select dl-trigger"
-              id="selReportFmt"
-              aria-label="Seleccionar formato de descarga del reporte global"
-            >
-              <option value="">Descargar reporte global…</option>
-              <option value="csv">Descargar reporte global en CSV (.csv)</option>
-              <option value="xlsx">
-                Descargar reporte global en Excel (.xlsx)
-              </option>
-            </select>
-          </div>
-          <span class="field-note">Incluye todos los archivos</span>
-        </div>
-        <footer class="slip-foot">
-          <span>Reporte PII global</span>
         </footer>
       </article>
     </main>

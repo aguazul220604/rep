@@ -40,6 +40,31 @@ function evidenceText(c) {
   return EVIDENCE_LABELS[c.evidence] || "—";
 }
 
+const CONFIDENCE_LABELS = { high: "Alta", medium: "Media", low: "Baja" };
+function confidenceBand(col) {
+  if (!col.is_pii) return null;
+  const prob = Number(col.pii_probability || 0);
+  const noContent = isEmptyContent(col);
+  const both = col.evidence === "both";
+  let level = "low";
+  if (!noContent && both && prob >= 0.85 && !col.needs_review) {
+    level = "high";
+  } else if (!noContent && prob >= 0.6) {
+    level = "medium";
+  }
+  const cls =
+    level === "high" ? "danger" : level === "medium" ? "warn" : "muted";
+  const notes = [];
+  if (noContent) notes.push("sin contenido");
+  if (col.needs_review) notes.push("requiere revisión");
+  const title =
+    "Confianza estimada combinando nombre y contenido " +
+    "(Alta ≥85%, Media 60–85%, Baja <60% o sin contenido). " +
+    "Es orientativa y no sustituye la revisión humana." +
+    (notes.length ? ` ${notes.join("; ")}.` : "");
+  return { level, label: CONFIDENCE_LABELS[level], cls, title };
+}
+
 const ALL = "__all";
 const state = {
   columns: [],
@@ -329,6 +354,33 @@ function renderDeepResult() {
   }
   if (Array.isArray(result.warnings)) warnings.push(...result.warnings);
 
+  const main = result.main || null;
+  const mainIsPii = Boolean(main && main.isPii);
+  const mainEntity = main && main.entity ? escapeHtml(main.entity) : "—";
+  const mainEvidence =
+    main && main.evidence
+      ? escapeHtml(EVIDENCE_LABELS[main.evidence] || main.evidence)
+      : "—";
+  const mainClassification =
+    main && main.classification ? escapeHtml(main.classification) : "—";
+  const deepIsZero = Number(result.pii_rate || 0) === 0;
+  const mainBlock = main
+    ? `<div class="deep-verdict">` +
+      `<span class="deep-verdict-label">Veredicto principal (nombre + contenido)</span>` +
+      `<div class="deep-verdict-body">` +
+      `<span class="status-badge ${mainIsPii ? "danger" : "success"}">${mainIsPii ? "PII" : "NO PII"}</span>` +
+      `<span>Entidad: <strong>${mainEntity}</strong></span>` +
+      `<span>Fuente: ${mainEvidence}</span>` +
+      `<span>Clasificación: ${mainClassification}</span>` +
+      `</div>` +
+      (mainIsPii && deepIsZero
+        ? `<p class="field-note">El análisis profundo no encontró coincidencias de contenido. La clasificación principal se basó en el nombre de la columna${
+            main.entity ? ` (entidad: ${mainEntity})` : ""
+          }; este resultado no cambia el veredicto principal.</p>`
+        : "") +
+      `</div>`
+    : "";
+
   const kpis = [
     ["Cobertura PII", pctText(result.pii_rate)],
     ["Celdas no vacías", countText(result.non_empty_values)],
@@ -352,6 +404,7 @@ function renderDeepResult() {
     `<p class="dl-sub mono">${escapeHtml(result.source_file || "")}</p>` +
     `</div>` +
     `<div class="deep-kpis">${kpis}</div>` +
+    mainBlock +
     (warnings.length
       ? `<div class="alert alert-warn deep-warning">${warnings
           .map((warning) => escapeHtml(warning))
@@ -443,6 +496,13 @@ async function handleDeepAnalyze() {
     if (!state.deepResult) {
       throw new Error("La respuesta no incluyó resultados del análisis.");
     }
+    state.deepResult.main = {
+      isPii: Boolean(column.is_pii),
+      entity: column.entity || "",
+      evidence: column.evidence || "",
+      probability: column.pii_probability,
+      classification: column.information_classification_label || "",
+    };
   } catch (error) {
     state.deepError = error.message || "Error desconocido en el análisis profundo.";
     showDeepError(state.deepError);
@@ -761,6 +821,12 @@ function renderTable() {
     const sampleCell = isEmptyContent(col)
       ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó únicamente en el nombre">Sin contenido</span>`
       : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
+    const band = confidenceBand(col);
+    const probCell = state.showAudit
+      ? `<span class="prob-num">${pctText(col.pii_probability)}</span>`
+      : band
+        ? `<span class="status-badge ${band.cls}" title="${escapeHtml(band.title)}">${band.label}</span>`
+        : `<span class="muted">—</span>`;
     const clsKey = String(col.information_classification || "").replace(
       /[^a-z_]/gi,
       "",
@@ -777,10 +843,10 @@ function renderTable() {
     tr.innerHTML =
       `<td><strong>${escapeHtml(col.name)}</strong></td>` +
       `<td><span class="status-badge ${col.is_pii ? "danger" : "success"}">${col.is_pii ? "PII" : "NO PII"}</span></td>` +
-      `<td>${escapeHtml(ent)}</td>` +
+      `<td class="col-audit">${escapeHtml(ent)}</td>` +
       `<td>${classificationCell}</td>` +
       `<td>${reviewCell}</td>` +
-      `<td class="col-audit"><span class="prob-num">${pctText(col.pii_probability)}</span></td>` +
+      `<td>${probCell}</td>` +
       `<td class="col-audit">${escapeHtml(entP)}</td>` +
       `<td class="col-audit" title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
       `<td class="col-audit">${sampleCell}</td>`;
@@ -1006,7 +1072,6 @@ const EXPORT_HEADER_DEFAULT = [
   "Archivo",
   "Nombre de Columna",
   "Prediccion",
-  "Entidad",
   "Clasificación",
   "Requiere revision",
 ];
@@ -1036,7 +1101,6 @@ function buildExportRows(cols) {
       c.source_file || "",
       c.name,
       c.is_pii ? "PII" : "NO PII",
-      c.entity ?? "",
       c.information_classification_label || "Sin clasificación",
       c.needs_review ? "Si" : "No",
     ];
@@ -1233,6 +1297,11 @@ function boot() {
   });
   bindChange("#in-show-audit", (e) => {
     state.showAudit = e.target.checked;
+    if (!state.showAudit) {
+      state.entity = "";
+      const se = $("#in-entity");
+      if (se) se.value = "";
+    }
     renderTable();
   });
   bindChange("#in-entity", (e) => {

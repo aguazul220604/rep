@@ -1917,6 +1917,28 @@ body.is-busy {
   font-family: var(--font-display);
   letter-spacing: 0.04em;
 }
+.howto-why {
+  margin-top: var(--s6);
+}
+.howto-subtitle {
+  font-family: var(--font-display);
+  font-weight: 780;
+  font-size: var(--t-small);
+  letter-spacing: 0.04em;
+  margin-bottom: var(--s3);
+}
+.howto-reasons {
+  display: grid;
+  gap: var(--s3);
+  margin: 0;
+  padding-left: var(--s6);
+  font-size: var(--t-small);
+  color: var(--ink-mid);
+}
+.howto-reasons li strong {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
 .howto-audit {
   margin-top: var(--s4);
   padding-top: var(--s3);
@@ -2079,6 +2101,32 @@ body.show-audit .is-basic-only {
   font-size: 1.35rem;
   font-weight: 780;
   color: var(--ink);
+}
+.deep-verdict {
+  border-left: 3px solid var(--c-rojo);
+  background: var(--paper-inset);
+  padding: var(--s3) var(--s4);
+  margin: var(--s3) 0;
+}
+.deep-verdict-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--t-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: var(--s2);
+}
+.deep-verdict-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  font-size: var(--t-small);
+  color: var(--ink);
+}
+.deep-verdict-body strong {
+  font-weight: 780;
 }
 .deep-warning {
   margin: var(--s3) 0;

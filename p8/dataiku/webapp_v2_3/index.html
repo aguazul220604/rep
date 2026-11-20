@@ -1460,8 +1460,15 @@
             <p class="howto-intro">
               Esta solución permite detectar e identificar datos de información
               personal (PII) en los archivos cargados y propone una clasificación
-              de la información para apoyar su revisión y gobierno. El análisis
-              combina el nombre de cada columna con una muestra de sus valores.
+              para apoyar su revisión y gobierno. El objetivo es saber qué datos
+              personales contiene un archivo, en qué columnas están y qué nivel de
+              protección requieren, para poder tratarlos de forma consistente.
+            </p>
+            <p class="howto-intro">
+              El análisis combina el nombre de cada columna con una muestra de sus
+              valores porque cada señal por separado es incompleta: el nombre es
+              rápido y explicable, pero ambiguo; el contenido confirma o descarta
+              la sospecha y detecta PII en columnas con nombres genéricos.
             </p>
             <ol class="howto-steps">
               <li>
@@ -1490,17 +1497,54 @@
                 tabla o el reporte global en formato CSV o Excel.
               </li>
             </ol>
+            <div class="howto-why">
+              <h3 class="howto-subtitle">¿Por qué se analiza así?</h3>
+              <ul class="howto-reasons">
+                <li>
+                  <strong>Nombre + contenido</strong>: el nombre de la columna es
+                  una pista rápida y explicable, pero puede ser ambigua; el
+                  contenido confirma o descarta la sospecha y permite detectar
+                  PII en columnas con nombres genéricos.
+                </li>
+                <li>
+                  <strong>Muestra de valores</strong>: se analiza una muestra
+                  representativa de valores únicos no nulos, no todos los
+                  registros, para estimar el tipo de dato con eficiencia y sin
+                  exponer más información de la necesaria.
+                </li>
+                <li>
+                  <strong>Confianza y revisión</strong>: el resultado es una
+                  estimación. La banda de confianza (Alta, Media o Baja) ayuda a
+                  priorizar la revisión, y los casos de baja confianza o sin
+                  contenido se marcan para validación humana.
+                </li>
+                <li>
+                  <strong>Clasificación por nivel</strong>: traducir la entidad
+                  detectada a un nivel de información (público, interno,
+                  confidencial, sensible o restringido) permite aplicar
+                  controles proporcionales al riesgo.
+                </li>
+              </ul>
+              <p class="field-note">
+                Esta herramienta apoya la revisión y el gobierno de la
+                información: es orientativa y no define por sí misma políticas de
+                retención o tratamiento. El análisis profundo mide la prevalencia
+                de PII en una columna y no reemplaza el veredicto principal.
+              </p>
+            </div>
             <div class="howto-audit">
               <label class="choice howto-audit-choice">
                 <input type="checkbox" id="in-show-audit" />
                 <span>Mostrar detalles de auditoría</span>
               </label>
               <p class="field-note">
-                De forma predeterminada, los resultados muestran únicamente las
-                columnas esenciales para revisión: Columna, Predicción PII,
-                Entidad, Clasificación y Revisión. Al habilitar esta opción, las
-                tablas y las descargas CSV o Excel incorporan las probabilidades,
-                la evidencia, la muestra y la marca de revisión de clasificación.
+                De forma predeterminada, los resultados muestran las columnas
+                esenciales para revisión: Columna, Predicción PII, Confianza
+                PII (banda Alta, Media o Baja), Clasificación y Revisión. Al
+                habilitar esta opción, las tablas muestran la entidad detectada,
+                las probabilidades exactas, la evidencia, la muestra y la marca
+                de revisión de clasificación, y las descargas CSV o Excel
+                incorporan ese detalle.
                 Es una vista de apoyo para validar las decisiones del modelo o
                 atender revisiones de auditoría; no modifica el análisis ni la
                 clasificación obtenida.
@@ -1517,6 +1561,12 @@
               <span class="is-basic-only">Vista básica</span>
               <span class="is-audit-only">Vista con detalles de auditoría</span>
             </p>
+            <p class="field-note">
+              Cada fila explica qué mide la columna y cómo interpretarla. La
+              Confianza PII es una banda orientativa; el porcentaje exacto, la
+              evidencia y la muestra están disponibles al activar "Mostrar
+              detalles de auditoría".
+            </p>
             <table class="interp-table" aria-labelledby="t-interp">
               <tbody>
                 <tr>
@@ -1530,7 +1580,7 @@
                     información personal.
                   </td>
                 </tr>
-                <tr>
+                <tr class="is-audit-only">
                   <th scope="row">Entidad</th>
                   <td>
                     Tipo de dato PII detectado (por ejemplo, nombre, RFC o
@@ -1551,9 +1601,14 @@
                     requieren validación humana.
                   </td>
                 </tr>
-                <tr class="is-audit-only">
-                  <th scope="row">Prob. PII</th>
-                  <td>Confianza del modelo de que la columna sea PII (0–100%).</td>
+                <tr>
+                  <th scope="row">Confianza PII</th>
+                  <td>
+                    Banda orientativa que resume la probabilidad fusionada de
+                    nombre y contenido: Alta (≥85%), Media (60–85%) y Baja
+                    (&lt;60% o sin contenido). En la vista con detalles de
+                    auditoría se muestra el porcentaje exacto.
+                  </td>
                 </tr>
                 <tr class="is-audit-only">
                   <th scope="row">Prob. entidad</th>
@@ -1572,8 +1627,8 @@
                 <tr class="is-audit-only">
                   <th scope="row">Revisar (clasificación)</th>
                   <td>
-                    La clasificación recomendada está sujeta a validación de
-                    Compliance.
+                    La clasificación recomendada está sujeta a validación
+                    humana.
                   </td>
                 </tr>
               </tbody>
@@ -1668,7 +1723,10 @@
         <div id="indexGrid" class="index-grid" hidden></div>
         <div id="fileViewHead" class="file-view-head" hidden></div>
         <div class="toolbar-row" id="fileFilterRow" hidden>
-          <div class="field" style="flex: 1 1 160px; margin-bottom: 0">
+          <div
+            class="field is-audit-only"
+            style="flex: 1 1 160px; margin-bottom: 0"
+          >
             <label class="field-label" for="in-entity">Entidad</label>
             <select class="select mono" id="in-entity">
               <option value="">Todas</option>
@@ -1716,7 +1774,13 @@
                 >
                   Predicción PII
                 </th>
-                <th scope="col" title="Tipo de dato PII detectado">Entidad</th>
+                <th
+                  scope="col"
+                  class="col-audit"
+                  title="Tipo de dato PII detectado"
+                >
+                  Entidad
+                </th>
                 <th
                   scope="col"
                   title="Nivel de información recomendado según la entidad detectada"
@@ -1731,10 +1795,9 @@
                 </th>
                 <th
                   scope="col"
-                  class="col-audit"
-                  title="Confianza del modelo de que la columna sea PII"
+                  title="Confianza estimada de que la columna sea PII, combinando nombre y contenido"
                 >
-                  Prob. PII
+                  Confianza PII
                 </th>
                 <th
                   scope="col"
@@ -1769,7 +1832,8 @@
         <p class="field-note" id="tableLegend">
           Las definiciones de cada columna se encuentran en
           <a href="#interpretabilidad">Interpretabilidad</a>, dentro de
-          "Funcionalidad". Para visualizar probabilidades, evidencia y muestra,
+          "Funcionalidad". La columna "Confianza PII" es una banda orientativa;
+          para visualizar el porcentaje exacto, la evidencia y la muestra,
           habilite "Mostrar detalles de auditoría" en dicha sección.
         </p>
         <p class="transfer-result mono" id="pagingInfo" aria-live="polite"></p>

@@ -1465,7 +1465,7 @@
               qué nivel de protección requieren, a fin de aplicarles un
               tratamiento consistente.
             </p>
-            <p class="howto-intro">
+            <p class="howto-intro content-only">
               El análisis combina el nombre de cada columna con una muestra de sus
               valores, dado que cada señal, considerada por separado, resulta
               incompleta: el nombre es inmediato y explicable, aunque ambiguo; el
@@ -1478,7 +1478,7 @@
                 archivos CSV o Excel y analizar varias tablas en una misma
                 ejecución.
               </li>
-              <li>
+              <li class="content-only">
                 <strong>Análisis</strong>: examina el nombre de la columna y una
                 muestra de su contenido para detectar patrones y valores
                 característicos.
@@ -1502,13 +1502,13 @@
             <div class="howto-why">
               <h3 class="howto-subtitle">Justificación del enfoque de análisis</h3>
               <ul class="howto-reasons">
-                <li>
+                <li class="content-only">
                   <strong>Nombre + contenido</strong>: el nombre de la columna
                   constituye una referencia inmediata y explicable, aunque puede
                   resultar ambiguo; el contenido confirma o descarta la sospecha y
                   permite detectar PII en columnas con nombres genéricos.
                 </li>
-                <li>
+                <li class="content-only">
                   <strong>Muestra de valores</strong>: se analiza una muestra
                   representativa de valores únicos no nulos, no la totalidad de
                   los registros, para estimar el tipo de dato con eficiencia y sin
@@ -1600,17 +1600,19 @@
                 <tr>
                   <th scope="row">Revisión</th>
                   <td>
-                    Indica las columnas de baja confianza o sin contenido que
-                    requieren validación humana.
+                    Indica las columnas o filas de baja confianza, desacuerdo
+                    entre señales o sin contenido que requieren validación
+                    humana.
                   </td>
                 </tr>
                 <tr>
                   <th scope="row">Confianza PII</th>
                   <td>
-                    Banda orientativa que resume la probabilidad fusionada de
-                    nombre y contenido: Alta (≥85%), Media (60–85%) y Baja
-                    (&lt;60% o sin contenido). En la vista con detalles de
-                    auditoría se muestra el porcentaje exacto.
+                    Banda orientativa que resume la probabilidad a partir del
+                    nombre y, cuando está habilitado, del contenido: Alta
+                    (≥85%), Media (60–85%) y Baja (&lt;60% o sin contenido). En
+                    la vista con detalles de auditoría se muestra el porcentaje
+                    exacto.
                   </td>
                 </tr>
                 <tr class="is-audit-only">
@@ -1621,7 +1623,7 @@
                   <th scope="row">Evidencia</th>
                   <td>Fuente usada para decidir: nombre, contenido o ambos.</td>
                 </tr>
-                <tr class="is-audit-only">
+                <tr class="is-audit-only content-only">
                   <th scope="row">Muestra</th>
                   <td>
                     Número de valores analizados; 0 indica que no hay contenido.
@@ -1646,6 +1648,33 @@
           <p class="slip-ref">PII 01</p>
         </header>
         <form id="pii-form" novalidate>
+          <div class="analysis-config" id="analysisConfig">
+            <div class="field analysis-config-field">
+              <label class="field-label" for="in-analysis-mode"
+                >Modo de análisis</label
+              >
+              <select class="select mono" id="in-analysis-mode">
+                <option value="columns" selected>
+                  Columnas de la tabla
+                </option>
+                <option value="metadata">Columna de metadata</option>
+              </select>
+              <span class="field-note" id="analysis-mode-note"
+                >Evalúa cada columna del archivo cargado usando solo su
+                nombre.</span
+              >
+            </div>
+            <div class="field analysis-config-field">
+              <label class="choice analysis-content-choice">
+                <input type="checkbox" id="in-content-analysis" />
+                <span>Analizar contenido</span>
+              </label>
+              <span class="field-note" id="content-analysis-note"
+                >Desactivado: la evaluación usa únicamente los nombres de las
+                columnas.</span
+              >
+            </div>
+          </div>
           <div class="upload-row">
             <div class="field upload-main" id="field-file">
               <label class="field-label" for="datasetFile"
@@ -1663,7 +1692,7 @@
                 hidden
               />
               <span class="field-note" id="note-file"
-                >Se analizan los nombres y el contenido de las columnas</span
+                >Se analizan únicamente los nombres de las columnas.</span
               >
             </div>
             <div class="btn-row upload-side">
@@ -1675,6 +1704,11 @@
               </button>
             </div>
           </div>
+          <div
+            class="metadata-columns"
+            id="metadataColumnSelectors"
+            hidden
+          ></div>
           <div class="alert alert-error" id="uploadError" hidden>
             <span class="alert-mark" aria-hidden="true">!</span
             ><span id="uploadError-text">—</span>
@@ -1700,7 +1734,7 @@
             class="field"
             style="max-width: 52ch; flex: 2 1 260px; margin-bottom: 0"
           >
-            <label class="field-label" for="in-filter"
+            <label class="field-label" for="in-filter" id="filter-label"
               >Filtrar por archivo</label
             >
             <input
@@ -1710,7 +1744,7 @@
               autocomplete="off"
               placeholder="Filtrar por nombre de archivo…"
             />
-            <span class="field-note"
+            <span class="field-note" id="filter-note"
               >Filtro por nombre de archivo. Si el campo se deja vacío, se
               muestran todos los archivos.</span
             >
@@ -1756,7 +1790,7 @@
                 ><input type="checkbox" id="in-only-review" />
                 <span>Únicamente con revisión</span></label
               >
-              <label class="choice"
+              <label class="choice content-only"
                 ><input type="checkbox" id="in-only-empty" />
                 <span>Únicamente sin contenido</span></label
               >
@@ -1764,7 +1798,7 @@
           </div>
         </div>
         <div id="tableFileHead" class="table-file-head" hidden></div>
-        <div class="table-wrap" id="tableWrap">
+        <div class="table-wrap columns-only" id="tableWrap">
           <table class="table" id="piiTable" aria-label="Resultado por columna">
             <thead>
               <tr>
@@ -1792,13 +1826,13 @@
                 </th>
                 <th
                   scope="col"
-                  title="Indica las columnas de baja confianza o sin contenido que requieren validación"
+                  title="Indica las columnas de baja confianza, desacuerdo o sin contenido que requieren validación"
                 >
                   Revisión
                 </th>
                 <th
                   scope="col"
-                  title="Confianza estimada de que la columna sea PII, combinando nombre y contenido"
+                  title="Confianza estimada de que la columna sea PII a partir del nombre y, si está habilitado, del contenido"
                 >
                   Confianza PII
                 </th>
@@ -1818,7 +1852,7 @@
                 </th>
                 <th
                   scope="col"
-                  class="col-audit"
+                  class="col-audit content-only"
                   title="Número de valores analizados; 0 indica que no hay contenido"
                 >
                   Muestra
@@ -1830,6 +1864,16 @@
                 <td colspan="9">Sin información analizada hasta el momento</td>
               </tr>
             </tbody>
+          </table>
+        </div>
+        <div class="table-wrap metadata-table-wrap" id="metadataTableWrap" hidden>
+          <table
+            class="table"
+            id="metadataTable"
+            aria-label="Resultado por fila de metadata"
+          >
+            <thead id="metadataTableHead"></thead>
+            <tbody id="metadataTableBody"></tbody>
           </table>
         </div>
         <p class="field-note" id="tableLegend">
@@ -1895,7 +1939,7 @@
           <span>Reporte PII global</span>
         </footer>
       </article>
-      <article class="slip" id="article-deep" aria-labelledby="t-deep">
+      <article class="slip content-only" id="article-deep" aria-labelledby="t-deep">
         <details class="slip-details" id="deepDetails">
           <summary class="slip-head slip-summary">
             <h2 class="slip-title" id="t-deep">Análisis profundo de columna</h2>

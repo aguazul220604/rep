@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import os
 import re
 import shutil
 import tempfile
@@ -31,6 +32,8 @@ from typing import (
 import pandas as pd
 
 from pii_engine.core.analyzer import PIIAnalyzer
+from pii_engine.core.metadata import MetadataNameAnalyzer
+from pii_engine.core.name_models import NameModelPredictor
 from pii_engine.core.row_sampling import (
     DEFAULT_ROW_SEED,
     DEFAULT_SAMPLING_MODE,
@@ -68,6 +71,28 @@ DEFAULT_ROW_RATIO = float(_SAMPLING_DEFAULTS.get("row_ratio") or 0.02)
 DEFAULT_ROW_MIN_ROWS = _SAMPLING_DEFAULTS.get("row_min_rows")
 DEFAULT_ROW_MAX_ROWS = _SAMPLING_DEFAULTS.get("row_max_rows")
 
+
+def _load_engine_config() -> dict:
+    try:
+        import yaml
+
+        payload = yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y", "si", "sí"}:
+        return True
+    if text in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
 CSV_SUFFIXES = {".csv"}
 PARQUET_SUFFIXES = {".parquet", ".pq"}
 EXCEL_SUFFIXES = {".xls", ".xlsx", ".xlsm"}
@@ -104,6 +129,9 @@ class SamplingConfig:
 
 class ModelProvider(Protocol):
     def resolve_artifacts(self) -> ModelArtifacts:
+        ...
+
+    def resolve_name_artifacts(self) -> ModelArtifacts:
         ...
 
     def resolve_model_path(self, folder_name: str) -> Any:
@@ -512,6 +540,14 @@ class LocalModelProvider:
                 content_model_path=self.content_model_path,
             )
 
+    def resolve_name_artifacts(self) -> ModelArtifacts:
+        with self._lock:
+            return ModelArtifacts(
+                binary_bundle=self.binary_bundle,
+                entity_bundle=self.entity_bundle,
+                content_model_path=None,
+            )
+
     def resolve_model_path(self, folder_name: str) -> Any:
         raise NotSupportedError(
             "LocalModelProvider no resuelve managed folders de Dataiku"
@@ -542,6 +578,7 @@ class PIIAdapter:
         self.model_provider = model_provider or LocalModelProvider()
         self.source_reader = source_reader or LocalSourceReader()
         self._analyzer = analyzer
+        self._metadata_analyzer: Optional[MetadataNameAnalyzer] = None
         self._analyzer_factory = analyzer_factory or PIIAnalyzer
         self._analyzer_getter = analyzer_getter
         self._lock = threading.RLock()
@@ -563,9 +600,69 @@ class PIIAdapter:
             self._analyzer = analyzer
             return analyzer
 
+    def build_metadata_analyzer(
+        self,
+        refresh: bool = False,
+    ) -> MetadataNameAnalyzer:
+        """
+        Construye el analizador de nombres para modo metadata-only.
+
+        No resuelve ni carga el modelo de contenido. Si los modelos de nombre no
+        están disponibles y el fallback regex está habilitado, opera con las
+        reglas determinísticas del motor.
+        """
+        with self._lock:
+            if self._metadata_analyzer is not None and not refresh:
+                return self._metadata_analyzer
+
+            try:
+                resolver = getattr(self.model_provider, "resolve_name_artifacts", None)
+                if callable(resolver):
+                    artifacts = resolver()
+                else:
+                    artifacts = self.model_provider.resolve_artifacts()
+            except Exception:
+                if not _env_flag("PII_METADATA_ALLOW_REGEX_FALLBACK", True):
+                    raise
+                artifacts = ModelArtifacts()
+
+            if artifacts is None:
+                artifacts = ModelArtifacts()
+            if (
+                artifacts.binary_bundle is None
+                and artifacts.entity_bundle is None
+                and not _env_flag("PII_METADATA_ALLOW_REGEX_FALLBACK", True)
+            ):
+                raise ModelArtifactError(
+                    "No se encontraron modelos de nombre (binario/entidad) "
+                    "y el fallback regex está deshabilitado."
+                )
+
+            cfg = _load_engine_config()
+            name_cfg = cfg.get("name_models", {}) or {}
+            name_resolution_cfg = cfg.get("name_resolution", {}) or {}
+            entity_bundle = (
+                artifacts.entity_bundle
+                if _env_flag("PII_METADATA_USE_ENTITY_MODEL", True)
+                else None
+            )
+
+            predictor = NameModelPredictor(
+                binary_bundle=artifacts.binary_bundle,
+                entity_bundle=entity_bundle,
+                binary_threshold=float(name_cfg.get("binary_threshold", 0.409)),
+                entity_min_confidence=float(
+                    name_cfg.get("entity_min_confidence", 0.45)
+                ),
+                name_resolution_cfg=name_resolution_cfg,
+            )
+            self._metadata_analyzer = MetadataNameAnalyzer(predictor)
+            return self._metadata_analyzer
+
     def reset(self) -> None:
         with self._lock:
             self._analyzer = None
+            self._metadata_analyzer = None
             self.model_provider.reset()
             self.source_reader.reset()
 
@@ -689,6 +786,15 @@ class PIIAdapter:
         except Exception as exc:
             info["status"] = "degraded"
             info["error"] = f"{type(exc).__name__}: {exc}"
+
+        try:
+            metadata_analyzer = self.build_metadata_analyzer()
+            info["metadata_ready"] = True
+            info["metadata_model_version"] = metadata_analyzer.model_version_tag
+        except Exception as exc:
+            info["metadata_ready"] = False
+            info["metadata_error"] = f"{type(exc).__name__}: {exc}"
+
         return info
 
 
@@ -893,27 +999,57 @@ class DataikuManagedFolderProvider:
             self._resolved[key] = resolved
         return resolved
 
-    def resolve_artifacts(self) -> ModelArtifacts:
+    def _resolve_folders(
+        self,
+        folders: Iterable[tuple],
+        strict: Optional[bool] = None,
+    ) -> tuple:
         paths: Dict[str, Optional[Path]] = {}
         errors = []
-        for name, folder in (
-            ("binary", self.binary_folder),
-            ("entity", self.entity_folder),
-            ("content", self.content_folder),
-        ):
+        for name, folder in folders:
             try:
                 paths[name] = self.resolve_model_path(folder)
-            except ModelArtifactError as exc:
+            except Exception as exc:
                 paths[name] = None
-                errors.append(str(exc))
+                errors.append(f"{name}: {exc}")
 
-        if self.strict_models and errors:
+        enforce = self.strict_models if strict is None else strict
+        if enforce and errors:
             raise ModelArtifactError("; ".join(errors))
+        return paths, errors
 
+    def resolve_artifacts(self) -> ModelArtifacts:
+        paths, _errors = self._resolve_folders(
+            (
+                ("binary", self.binary_folder),
+                ("entity", self.entity_folder),
+                ("content", self.content_folder),
+            )
+        )
         return ModelArtifacts(
             binary_bundle=paths.get("binary"),
             entity_bundle=paths.get("entity"),
             content_model_path=paths.get("content"),
+        )
+
+    def resolve_name_artifacts(self) -> ModelArtifacts:
+        """
+        Resuelve solo los artefactos de nombre (binario + entidad).
+
+        No falla si falta uno de los dos: el analizador de metadata puede operar
+        con el modelo disponible y recurrir a regex para el resto.
+        """
+        paths, _errors = self._resolve_folders(
+            (
+                ("binary", self.binary_folder),
+                ("entity", self.entity_folder),
+            ),
+            strict=False,
+        )
+        return ModelArtifacts(
+            binary_bundle=paths.get("binary"),
+            entity_bundle=paths.get("entity"),
+            content_model_path=None,
         )
 
     def folders_info(self) -> Dict[str, str]:

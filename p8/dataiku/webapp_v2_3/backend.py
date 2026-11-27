@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import os
 import re
@@ -44,6 +45,7 @@ try:
         read_csv_sample,
         read_excel_sample,
     )
+    from pii_engine.core.schema import NO_ENTITY
     _ENGINE_IMPORT_ERROR = None
 except Exception as _exc_engine:
     DataikuAdapter = None
@@ -52,6 +54,7 @@ except Exception as _exc_engine:
     _CFG_ROW_RATIO = 0.02
     _CFG_ROW_MIN_ROWS = None
     _CFG_ROW_MAX_ROWS = None
+    NO_ENTITY = "no aplica"
 
     class ModelArtifactError(RuntimeError):
         pass
@@ -122,6 +125,19 @@ def _parse_optional_rows(value: Any, name: str) -> Optional[int]:
     if rows <= 0:
         raise ValueError(f"{name} debe ser un entero positivo o vacío")
     return rows
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y", "si", "sí"}:
+        return True
+    if text in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
 
 
 def _parse_sample_ratio(value: Any) -> float:
@@ -205,6 +221,21 @@ _DEEP_INCLUDE_MODEL = str(os.getenv("PII_DEEP_INCLUDE_MODEL", "1")).strip().lowe
     "no",
     "off",
 }
+
+_DEFAULT_CONTENT_ANALYSIS = _parse_bool(
+    os.getenv("PII_DEFAULT_CONTENT_ANALYSIS"), False
+)
+_METADATA_ELEM_COLUMN = (os.getenv("PII_METADATA_ELEM_COLUMN") or "").strip()
+_env_metadata_max_rows = os.getenv("PII_METADATA_MAX_ROWS")
+try:
+    _METADATA_MAX_ROWS = (
+        _parse_optional_rows(_env_metadata_max_rows, "PII_METADATA_MAX_ROWS")
+        if _env_metadata_max_rows is not None
+        else 200_000
+    )
+except ValueError as _exc_metadata_rows:
+    logger.warning("%s; se usa 200000", _exc_metadata_rows)
+    _METADATA_MAX_ROWS = 200_000
 
 app.config["MAX_CONTENT_LENGTH"] = (
     None if _MAX_UPLOAD_MB is None else _MAX_UPLOAD_MB * 1024 * 1024
@@ -365,6 +396,140 @@ def _prepared_column_pairs(columns) -> List[Dict[str, Any]]:
         used.add(name)
         pairs.append({"position": position, "original": original, "name": name})
     return pairs
+
+
+_ELEM_COLUMN_ALIASES = (
+    "dataelem",
+    "dataelement",
+    "dataelemento",
+    "datoelem",
+    "elementodato",
+    "elementodedato",
+    "elemento",
+    "nombredato",
+    "nombreelemento",
+    "nombrecampo",
+    "dataitem",
+    "datafield",
+    "campo",
+    "field",
+    "columna",
+    "column",
+    "atributo",
+)
+
+
+def _normalize_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _detect_elem_column(columns: List[str]) -> Optional[str]:
+    if not columns:
+        return None
+    normalized = [(column, _normalize_key(column)) for column in columns]
+
+    if _METADATA_ELEM_COLUMN:
+        wanted = _normalize_key(_METADATA_ELEM_COLUMN)
+        for original, key in normalized:
+            if key == wanted:
+                return original
+
+    for alias in _ELEM_COLUMN_ALIASES:
+        for original, key in normalized:
+            if key == alias:
+                return original
+
+    for original, key in normalized:
+        if "dataelem" in key or "elementodato" in key or "elementodedato" in key:
+            return original
+    return None
+
+
+def _parse_json_mapping(value: Any) -> Dict[str, Any]:
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        payload = json.loads(str(value))
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _sheet_for_index(mapping: Dict[str, Any], index: int) -> Any:
+    value = mapping.get(str(index), mapping.get(index))
+    if value in (None, ""):
+        return None
+    return value
+
+
+def _read_header_columns(file, sheet: Optional[Any] = None) -> List[str]:
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    _rewind_upload(file)
+    try:
+        if suffix == ".csv":
+            header = pd.read_csv(getattr(file, "stream", file), nrows=0)
+        elif suffix in {".xls", ".xlsx", ".xlsm"}:
+            header = pd.read_excel(
+                getattr(file, "stream", file),
+                nrows=0,
+                sheet_name=sheet if sheet not in (None, "") else 0,
+            )
+        else:
+            raise ValueError(
+                f"Formato no compatible con '{filename}'. "
+                "Se admiten archivos .csv o Excel."
+            )
+    finally:
+        _rewind_upload(file)
+    return [str(column) for column in header.columns]
+
+
+def _read_metadata_frame(
+    file,
+    sheet: Optional[Any] = None,
+    max_rows: Optional[int] = None,
+) -> pd.DataFrame:
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    _rewind_upload(file)
+    try:
+        if suffix == ".csv":
+            kwargs: Dict[str, Any] = {
+                "dtype": str,
+                "keep_default_na": False,
+                "na_values": [],
+            }
+            if max_rows:
+                kwargs["nrows"] = int(max_rows) + 1
+            return pd.read_csv(getattr(file, "stream", file), **kwargs)
+        if suffix in {".xls", ".xlsx", ".xlsm"}:
+            kwargs = {
+                "dtype": str,
+                "keep_default_na": False,
+                "na_values": [],
+                "sheet_name": sheet if sheet not in (None, "") else 0,
+            }
+            if max_rows:
+                kwargs["nrows"] = int(max_rows) + 1
+            return pd.read_excel(getattr(file, "stream", file), **kwargs)
+    finally:
+        _rewind_upload(file)
+    raise ValueError(
+        f"Formato no compatible con '{filename}'. "
+        "Se admiten archivos .csv o Excel."
+    )
+
+
+def _clip_metadata_frame(
+    df: pd.DataFrame,
+    max_rows: Optional[int],
+) -> tuple:
+    if not max_rows or len(df) <= int(max_rows):
+        return df, False
+    return df.iloc[: int(max_rows)].copy(), True
 
 
 def _rewind_upload(file) -> None:
@@ -563,7 +728,120 @@ def _result_to_row(
         "sample_size": data.get("sample_size"),
         "model_version": data.get("model_version"),
         "classification_version": INFORMATION_CLASSIFICATION_VERSION,
+        "content_analysis": True,
+        "analysis_mode": "columns",
     }
+    row.update(_classify_information(data))
+    return row
+
+
+def _metadata_column_row(
+    prediction: Any,
+    source_file: str,
+    source_index: Optional[int],
+    model_version: str,
+) -> Dict[str, Any]:
+    data = {
+        "pii": bool(prediction.is_pii),
+        "entity": prediction.entity,
+        "needs_review": bool(prediction.needs_review),
+    }
+    row = {
+        "source_file": source_file,
+        "source_index": source_index,
+        "dataset": source_file,
+        "name": prediction.element,
+        "is_pii": bool(prediction.is_pii),
+        "pii_probability": round(float(prediction.prob_pii), 4),
+        "entity": prediction.entity if prediction.is_pii else None,
+        "entity_probability": (
+            round(float(prediction.prob_entity), 4)
+            if prediction.is_pii
+            else None
+        ),
+        "needs_review": bool(prediction.needs_review),
+        "evidence": "name",
+        "match_rate": 0.0,
+        "sample_size": 0,
+        "model_version": model_version,
+        "classification_version": INFORMATION_CLASSIFICATION_VERSION,
+        "content_analysis": False,
+        "analysis_mode": "columns",
+        "source": prediction.source,
+        "score_binary": round(float(prediction.score_binary), 4),
+        "regex_entity": prediction.regex_entity,
+        "entity_top1": prediction.entity_top1,
+        "evaluable": bool(prediction.evaluable),
+    }
+    row.update(_classify_information(data))
+    return row
+
+
+def _metadata_row(
+    prediction: Any,
+    source_file: str,
+    source_index: Optional[int],
+    row_index: int,
+    element: str,
+    metadata_values: Dict[str, Any],
+    model_version: str,
+) -> Dict[str, Any]:
+    if prediction is None:
+        data = {"pii": False, "entity": NO_ENTITY, "needs_review": True}
+        pii = False
+        entity = NO_ENTITY
+        prob_pii = 0.0
+        prob_entity = 0.0
+        needs_review = True
+        source = "none"
+        score_binary = 0.0
+        regex_entity = None
+        entity_top1 = None
+        evaluable = bool(element)
+    else:
+        data = {
+            "pii": bool(prediction.is_pii),
+            "entity": prediction.entity,
+            "needs_review": bool(prediction.needs_review),
+        }
+        pii = bool(prediction.is_pii)
+        entity = prediction.entity
+        prob_pii = float(prediction.prob_pii)
+        prob_entity = float(prediction.prob_entity)
+        needs_review = bool(prediction.needs_review)
+        source = prediction.source
+        score_binary = float(prediction.score_binary)
+        regex_entity = prediction.regex_entity
+        entity_top1 = prediction.entity_top1
+        evaluable = bool(prediction.evaluable)
+
+    if not evaluable:
+        needs_review = True
+
+    row = dict(metadata_values)
+    row.update(
+        {
+            "source_file": source_file,
+            "source_index": source_index,
+            "row_index": row_index,
+            "element": element,
+            "evaluable": evaluable,
+            "analysis_mode": "metadata",
+            "content_analysis": False,
+            "model_version": model_version,
+            "classification_version": INFORMATION_CLASSIFICATION_VERSION,
+            "is_pii": bool(pii),
+            "pii_probability": round(prob_pii, 4),
+            "entity": entity if pii else None,
+            "entity_probability": round(prob_entity, 4) if pii else None,
+            "needs_review": needs_review,
+            "evidence": "name" if evaluable else "sin_elemento",
+            "source": source,
+            "score_binary": round(score_binary, 4),
+            "regex_entity": regex_entity,
+            "entity_top1": entity_top1,
+        }
+    )
     row.update(_classify_information(data))
     return row
 
@@ -597,8 +875,268 @@ def health():
     info["deep_max_rows"] = _DEEP_MAX_ROWS
     info["deep_chunk_size"] = _DEEP_CHUNK_SIZE
     info["deep_include_model"] = _DEEP_INCLUDE_MODEL
-    status = 200 if info.get("engine_ready") else 503
+    info["default_content_analysis"] = _DEFAULT_CONTENT_ANALYSIS
+    info["metadata_elem_column"] = _METADATA_ELEM_COLUMN or None
+    info["metadata_max_rows"] = _METADATA_MAX_ROWS
+    info["metadata_use_entity_model"] = _parse_bool(
+        os.getenv("PII_METADATA_USE_ENTITY_MODEL"), True
+    )
+    info["metadata_allow_regex_fallback"] = _parse_bool(
+        os.getenv("PII_METADATA_ALLOW_REGEX_FALLBACK"), True
+    )
+    info["analysis_modes"] = ["columns", "metadata"]
+    status = (
+        200
+        if (info.get("engine_ready") or info.get("metadata_ready"))
+        else 503
+    )
     return jsonify(info), status
+
+
+@app.route("/inspect_columns", methods=["POST"])
+def inspect_columns():
+    if _ENGINE_IMPORT_ERROR:
+        return _error(
+            f"No se pudo importar pii_engine: {_ENGINE_IMPORT_ERROR}",
+            503,
+        )
+
+    files = request.files.getlist("file")
+    if not files:
+        return _error("No se recibió ningún archivo.", 400)
+
+    sheets = _parse_json_mapping(request.form.get("sheets"))
+    results: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+
+    for file_index, file in enumerate(files):
+        if not file.filename:
+            continue
+        try:
+            columns = _read_header_columns(
+                file, sheet=_sheet_for_index(sheets, file_index)
+            )
+        except ValueError as exc:
+            warnings.append(str(exc))
+            continue
+        except Exception as exc:
+            logger.exception("No se pudieron leer columnas de '%s'", file.filename)
+            warnings.append(
+                f"No se pudieron leer las columnas de '{file.filename}': "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+
+        pairs = _prepared_column_pairs(columns)
+        names = [pair["name"] for pair in pairs]
+        results.append(
+            {
+                "source_file": file.filename,
+                "source_index": file_index,
+                "columns": names,
+                "suggested_column": _detect_elem_column(names),
+            }
+        )
+
+    if not results:
+        return _error(
+            " | ".join(warnings)
+            if warnings
+            else "Ningún archivo pudo inspeccionarse.",
+            400,
+        )
+
+    response = {"status": "success", "files": results}
+    if warnings:
+        response["warnings"] = warnings
+    return jsonify(response)
+
+
+METADATA_RESULT_COLUMNS = [
+    "element",
+    "is_pii",
+    "entity",
+    "pii_probability",
+    "entity_probability",
+    "needs_review",
+    "evidence",
+    "source",
+    "score_binary",
+    "regex_entity",
+    "entity_top1",
+    "evaluable",
+    "information_classification",
+    "information_classification_label",
+]
+
+
+@app.route("/process_metadata", methods=["POST"])
+def process_metadata():
+    if _ENGINE_IMPORT_ERROR:
+        return _error(
+            f"No se pudo importar pii_engine: {_ENGINE_IMPORT_ERROR}",
+            503,
+        )
+
+    files = request.files.getlist("file")
+    if not files:
+        return _error("No se recibió ningún archivo de metadata.", 400)
+
+    try:
+        adapter = get_adapter()
+        analyzer = adapter.build_metadata_analyzer()
+    except Exception as exc:
+        logger.exception("No se pudo inicializar el analizador de metadata")
+        return _error(
+            "No se pudo inicializar el analizador de metadata: "
+            f"{type(exc).__name__}: {exc}",
+            503,
+        )
+
+    metadata_columns = _parse_json_mapping(request.form.get("metadata_columns"))
+    sheets = _parse_json_mapping(request.form.get("sheets"))
+    model_version = getattr(analyzer, "model_version_tag", "metadata")
+
+    prepared: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    all_elements: List[str] = []
+    metadata_order: Dict[str, None] = {}
+
+    for file_index, file in enumerate(files):
+        if not file.filename:
+            continue
+
+        try:
+            df = _read_metadata_frame(
+                file,
+                sheet=_sheet_for_index(sheets, file_index),
+                max_rows=_METADATA_MAX_ROWS,
+            )
+        except ValueError as exc:
+            warnings.append(str(exc))
+            continue
+        except Exception as exc:
+            logger.exception("No se pudo leer '%s'", file.filename)
+            warnings.append(
+                f"No se pudo leer '{file.filename}': "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+
+        df, truncated = _clip_metadata_frame(df, _METADATA_MAX_ROWS)
+        df = _prepare_dataframe(df)
+        if df.shape[1] == 0:
+            warnings.append(
+                f"'{file.filename}' no tiene columnas válidas para analizar."
+            )
+            continue
+
+        columns = [str(column) for column in df.columns]
+        requested = metadata_columns.get(str(file_index), metadata_columns.get(file_index))
+        elem_column = str(requested) if requested not in (None, "") else None
+        if elem_column not in columns:
+            elem_column = _detect_elem_column(columns)
+
+        if not elem_column:
+            warnings.append(
+                f"'{file.filename}' no contiene la columna de metadata indicada "
+                "y no fue posible detectarla automáticamente."
+            )
+            continue
+
+        for column in columns:
+            metadata_order.setdefault(column, None)
+
+        elements = [str(value).strip() for value in df[elem_column].tolist()]
+        for element in elements:
+            if element:
+                all_elements.append(element)
+
+        prepared.append(
+            {
+                "source_file": file.filename,
+                "source_index": file_index,
+                "df": df,
+                "columns": columns,
+                "elem_column": elem_column,
+                "elements": elements,
+                "truncated": truncated,
+                "rows_total": int(len(df)),
+            }
+        )
+
+    if not prepared:
+        return _error(
+            " | ".join(warnings)
+            if warnings
+            else "Ningún archivo de metadata pudo procesarse.",
+            400,
+        )
+
+    unique_elements = list(dict.fromkeys(all_elements))
+    try:
+        predictions = analyzer.predict(unique_elements) if unique_elements else {}
+    except Exception as exc:
+        logger.exception("Error al predecir metadata")
+        return _error(
+            f"No se pudo completar la predicción de metadata: "
+            f"{type(exc).__name__}: {exc}",
+            500,
+        )
+
+    rows: List[Dict[str, Any]] = []
+    file_summaries: List[Dict[str, Any]] = []
+    for item in prepared:
+        df = item["df"]
+        elem_column = item["elem_column"]
+        elements = item["elements"]
+        if item["truncated"]:
+            warnings.append(
+                f"'{item['source_file']}' se truncó a {_METADATA_MAX_ROWS} filas "
+                "según PII_METADATA_MAX_ROWS."
+            )
+        file_summaries.append(
+            {
+                "source_file": item["source_file"],
+                "source_index": item["source_index"],
+                "elem_column": elem_column,
+                "columns": item["columns"],
+                "rows_total": item["rows_total"],
+                "truncated": item["truncated"],
+            }
+        )
+
+        for row_index, (_, row) in enumerate(df.iterrows()):
+            element = elements[row_index] if row_index < len(elements) else ""
+            metadata_values = {
+                column: ("" if row[column] is None else str(row[column]))
+                for column in item["columns"]
+            }
+            rows.append(
+                _metadata_row(
+                    predictions.get(element) if element else None,
+                    item["source_file"],
+                    item["source_index"],
+                    row_index,
+                    element,
+                    metadata_values,
+                    model_version,
+                )
+            )
+
+    response = {
+        "status": "success",
+        "analysis_mode": "metadata",
+        "content_analysis": False,
+        "files": file_summaries,
+        "metadata_columns": list(metadata_order.keys()),
+        "result_columns": METADATA_RESULT_COLUMNS,
+        "results": rows,
+        "classification_version": INFORMATION_CLASSIFICATION_VERSION,
+    }
+    if warnings:
+        response["warnings"] = warnings
+    return jsonify(response)
 
 
 @app.route("/process_table", methods=["POST"])
@@ -618,6 +1156,10 @@ def process_table():
     except ValueError as exc:
         return _error(str(exc), 400)
 
+    content_analysis = _parse_bool(
+        request.form.get("content_analysis"), _DEFAULT_CONTENT_ANALYSIS
+    )
+
     try:
         adapter = get_adapter()
     except Exception as exc:
@@ -627,11 +1169,68 @@ def process_table():
             503,
         )
 
+    metadata_analyzer = None
+    metadata_model_version = "metadata"
+    if not content_analysis:
+        try:
+            metadata_analyzer = adapter.build_metadata_analyzer()
+            metadata_model_version = getattr(
+                metadata_analyzer, "model_version_tag", "metadata"
+            )
+        except Exception as exc:
+            logger.exception("No se pudo inicializar el analizador de nombres")
+            return _error(
+                "No se pudo inicializar el analizador de nombres: "
+                f"{type(exc).__name__}: {exc}",
+                503,
+            )
+
     rows: List[Dict[str, Any]] = []
     warnings: List[str] = []
 
     for file_index, file in enumerate(files):
         if not file.filename:
+            continue
+
+        if not content_analysis:
+            try:
+                header_columns = _read_header_columns(file)
+            except ValueError as exc:
+                warnings.append(str(exc))
+                continue
+
+            pairs = _prepared_column_pairs(header_columns)
+            names = [pair["name"] for pair in pairs]
+            if not names:
+                warnings.append(
+                    f"'{file.filename}' no tiene columnas válidas para analizar."
+                )
+                continue
+
+            try:
+                predictions = metadata_analyzer.predict(names)
+            except Exception as exc:
+                logger.exception(
+                    "Error al analizar nombres de '%s'", file.filename
+                )
+                warnings.append(
+                    f"No se pudo analizar '{file.filename}': "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                continue
+
+            for name in names:
+                prediction = predictions.get(name)
+                if prediction is None:
+                    continue
+                rows.append(
+                    _metadata_column_row(
+                        prediction,
+                        file.filename,
+                        file_index,
+                        metadata_model_version,
+                    )
+                )
             continue
 
         try:
@@ -684,6 +1283,8 @@ def process_table():
 
     response = {
         "status": "success",
+        "analysis_mode": "columns",
+        "content_analysis": bool(content_analysis),
         "columns_analysis": rows,
         "classification_version": INFORMATION_CLASSIFICATION_VERSION,
     }

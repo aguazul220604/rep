@@ -3,6 +3,7 @@
 Motor agnóstico de detección e identificación de datos PII (`pii_engine`).
 """
 from pii_engine.core.analyzer import PIIAnalyzer, analyze
+from pii_engine.core.metadata import MetadataNameAnalyzer, MetadataPrediction
 from pii_engine.core.schema import (
     ENGINE_VERSION,
     NO_ENTITY,
@@ -23,6 +24,8 @@ __all__ = [
     "OTRO_PII",
     "PIIAnalyzer",
     "analyze",
+    "MetadataNameAnalyzer",
+    "MetadataPrediction",
     "ColumnResult",
     "ColumnSample",
     "EntityScore",

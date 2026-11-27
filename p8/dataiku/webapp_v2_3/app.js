@@ -1,5 +1,7 @@
 const API = {
   process: "process_table",
+  inspect: "inspect_columns",
+  metadata: "process_metadata",
   export: "export_xlsx",
   health: "health",
   deep: "analyze_column",
@@ -65,6 +67,24 @@ function confidenceBand(col) {
   return { level, label: CONFIDENCE_LABELS[level], cls, title };
 }
 
+function nameOnlyConfidenceBand(col) {
+  if (!col.is_pii) return null;
+  const prob = Number(col.pii_probability || 0);
+  let level = "low";
+  if (prob >= 0.85 && !col.needs_review) level = "high";
+  else if (prob >= 0.6) level = "medium";
+  const cls =
+    level === "high" ? "danger" : level === "medium" ? "warn" : "muted";
+  return {
+    level,
+    label: CONFIDENCE_LABELS[level],
+    cls,
+    title:
+      "Confianza estimada a partir del nombre de la columna. " +
+      "Es orientativa y no sustituye la revisión humana.",
+  };
+}
+
 const ALL = "__all";
 const state = {
   columns: [],
@@ -84,6 +104,14 @@ const state = {
   deepBusy: false,
   deepResult: null,
   deepError: null,
+  analysisMode: "columns",
+  contentAnalysis: false,
+  defaultContentAnalysis: false,
+  metadataFiles: [],
+  metadataColumns: {},
+  metadataRows: [],
+  metadataOrder: [],
+  inspectBusy: false,
 };
 
 async function readJson(res) {
@@ -96,6 +124,107 @@ async function readJson(res) {
   }
 }
 
+function isMetadataMode() {
+  return state.analysisMode === "metadata";
+}
+
+function currentRows() {
+  return isMetadataMode() ? state.metadataRows : state.columns;
+}
+
+function applyModeVisibility() {
+  const metadata = isMetadataMode();
+  const content = Boolean(state.contentAnalysis) && !metadata;
+
+  document.body.classList.toggle("mode-metadata", metadata);
+  document.body.classList.toggle("content-on", content);
+  document.body.classList.toggle("name-only", !content);
+
+  const contentBox = $("#in-content-analysis");
+  if (contentBox) {
+    contentBox.checked = content;
+    contentBox.disabled = metadata;
+  }
+
+  const deep = $("#article-deep");
+  if (deep) deep.hidden = !content;
+
+  const note = $("#note-file");
+  if (note) {
+    note.textContent = metadata
+      ? "Se analiza únicamente el nombre de cada valor de la columna de metadata seleccionada."
+      : content
+        ? "Se analizan los nombres y el contenido de las columnas."
+        : "Se analizan únicamente los nombres de las columnas.";
+  }
+
+  const modeNote = $("#analysis-mode-note");
+  if (modeNote) {
+    modeNote.textContent = metadata
+      ? "Seleccione una columna por archivo; cada valor se evalúa como un campo independiente."
+      : "Evalúa cada columna del archivo cargado usando solo su nombre.";
+  }
+
+  const contentNote = $("#content-analysis-note");
+  if (contentNote) {
+    contentNote.textContent = metadata
+      ? "No aplica en modo metadata: solo se analizan nombres."
+      : content
+        ? "Activado: se analiza una muestra del contenido de cada columna."
+        : "Desactivado: la evaluación usa únicamente los nombres de las columnas.";
+  }
+
+  const filterLabel = $("#filter-label");
+  if (filterLabel) {
+    filterLabel.textContent = metadata
+      ? "Filtrar resultados"
+      : "Filtrar por archivo";
+  }
+  const filterInput = $("#in-filter");
+  if (filterInput) {
+    filterInput.placeholder = metadata
+      ? "Filtrar por elemento, entidad, dataset…"
+      : "Filtrar por nombre de archivo…";
+  }
+  const filterNote = $("#filter-note");
+  if (filterNote) {
+    filterNote.textContent = metadata
+      ? "Busca en los valores de metadata, el elemento analizado, la entidad o el dataset."
+      : "Filtro por nombre de archivo. Si el campo se deja vacío, se muestran todos los archivos.";
+  }
+
+  const onlyEmpty = $("#in-only-empty");
+  if (onlyEmpty) {
+    const label = onlyEmpty.closest("label");
+    if (label) label.hidden = !content;
+  }
+
+  const selectors = $("#metadataColumnSelectors");
+  if (selectors && !metadata) selectors.hidden = true;
+
+  const legend = $("#tableLegend");
+  if (legend) {
+    if (metadata) {
+      legend.innerHTML =
+        "Cada fila representa un valor de la columna de metadata seleccionada. " +
+        "La predicción se basa únicamente en el nombre del elemento; " +
+        "la probabilidad exacta y la fuente están disponibles con “Mostrar detalles de auditoría”.";
+    } else if (!content) {
+      legend.innerHTML =
+        "La predicción se basa únicamente en el nombre de cada columna; " +
+        "no se lee el contenido. Las probabilidades exactas están disponibles con " +
+        "“Mostrar detalles de auditoría”.";
+    } else {
+      legend.innerHTML =
+        'Las definiciones de cada columna se encuentran en ' +
+        '<a href="#interpretabilidad">Interpretabilidad</a>, dentro de ' +
+        '"Funcionalidad". La columna "Confianza PII" es una banda orientativa; ' +
+        'para visualizar el porcentaje exacto, la evidencia y la muestra, ' +
+        'habilite "Mostrar detalles de auditoría" en dicha sección.';
+    }
+  }
+}
+
 async function loadConfig() {
   try {
     const res = await fetch(apiUrl(API.health));
@@ -104,10 +233,14 @@ async function loadConfig() {
     state.maxUploadMb = typeof max === "number" && max > 0 ? max : null;
     const rows = data.max_read_rows;
     state.maxReadRows = typeof rows === "number" && rows > 0 ? rows : null;
+    const def = data.default_content_analysis;
+    state.defaultContentAnalysis = def === 1 || def === true || def === "1";
+    state.contentAnalysis = state.defaultContentAnalysis;
   } catch {
     state.maxUploadMb = null;
     state.maxReadRows = null;
   }
+  applyModeVisibility();
 }
 
 async function apiProcess(formData) {
@@ -130,8 +263,67 @@ async function apiProcess(formData) {
   return data;
 }
 
+async function apiMetadata(formData) {
+  const res = await fetch(apiUrl(API.metadata), {
+    method: "POST",
+    body: formData,
+  });
+  const data = await readJson(res);
+  if (!res.ok || data.status !== "success") {
+    const fallback =
+      res.status === 413
+        ? "El archivo es demasiado grande para el servidor o el proxy (HTTP 413)."
+        : "HTTP " +
+          res.status +
+          (res.statusText ? " " + res.statusText : "") +
+          " en " +
+          API.metadata;
+    throw new Error(data.message || fallback);
+  }
+  return data;
+}
+
+async function inspectMetadataFiles(files) {
+  if (!files || !files.length) {
+    state.metadataFiles = [];
+    state.metadataColumns = {};
+    renderMetadataSelectors();
+    return;
+  }
+  const fd = new FormData();
+  files.forEach((file) => fd.append("file", file));
+  state.inspectBusy = true;
+  renderMetadataSelectors();
+  try {
+    const res = await fetch(apiUrl(API.inspect), {
+      method: "POST",
+      body: fd,
+    });
+    const data = await readJson(res);
+    if (!res.ok || data.status !== "success") {
+      throw new Error(
+        data.message ||
+          "HTTP " + res.status + " en " + API.inspect,
+      );
+    }
+    const previous = state.metadataColumns || {};
+    const next = {};
+    state.metadataFiles = Array.isArray(data.files) ? data.files : [];
+    for (const entry of state.metadataFiles) {
+      const prev = previous[entry.source_index];
+      const suggested = entry.suggested_column || "";
+      next[entry.source_index] =
+        prev && entry.columns.includes(prev) ? prev : suggested;
+    }
+    state.metadataColumns = next;
+  } finally {
+    state.inspectBusy = false;
+    renderMetadataSelectors();
+  }
+}
+
 function getFiles() {
-  const s = new Set(state.columns.map((c) => c.source_file || ""));
+  const s = new Set(currentRows().map((c) => c.source_file || ""));
   return Array.from(s)
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "es"));
@@ -141,7 +333,7 @@ const isIndexView = () => isMulti() && state.activeFile === ALL;
 
 function getEntities() {
   const s = new Set();
-  for (const c of state.columns) if (c.is_pii && c.entity) s.add(c.entity);
+  for (const c of currentRows()) if (c.is_pii && c.entity) s.add(c.entity);
   return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
 }
 
@@ -155,7 +347,7 @@ function tableScopeFile() {
 function getEntitiesForScope() {
   const scope = tableScopeFile();
   const s = new Set();
-  for (const c of state.columns) {
+  for (const c of currentRows()) {
     if (scope && (c.source_file || "") !== scope) continue;
     if (c.is_pii && c.entity) s.add(c.entity);
   }
@@ -165,7 +357,7 @@ function getEntitiesForScope() {
 function getClassificationsForScope() {
   const scope = tableScopeFile();
   const m = new Map();
-  for (const c of state.columns) {
+  for (const c of currentRows()) {
     if (scope && (c.source_file || "") !== scope) continue;
     const key = c.information_classification;
     if (!key) continue;
@@ -544,10 +736,10 @@ function topEntities(cols, n = 2) {
 }
 
 function fileSummary(file) {
-  const cols = state.columns.filter((c) => (c.source_file || "") === file);
-  const pii = cols.filter((c) => c.is_pii).length;
-  const pct = cols.length ? Math.round((pii / cols.length) * 100) : 0;
-  return { file, total: cols.length, pii, pct, top: topEntities(cols) };
+  const rows = currentRows().filter((c) => (c.source_file || "") === file);
+  const pii = rows.filter((c) => c.is_pii).length;
+  const pct = rows.length ? Math.round((pii / rows.length) * 100) : 0;
+  return { file, total: rows.length, pii, pct, top: topEntities(rows) };
 }
 
 function visibleColumns() {
@@ -572,49 +764,124 @@ function visibleColumns() {
   });
 }
 
+function visibleMetadataRows() {
+  const q = state.filter.trim().toLowerCase();
+  return state.metadataRows.filter((row) => {
+    if (state.activeFile !== ALL && (row.source_file || "") !== state.activeFile)
+      return false;
+    if (state.onlyPii && !row.is_pii) return false;
+    if (state.onlyReview && !row.needs_review) return false;
+    if (state.entity && (row.entity || "") !== state.entity) return false;
+    if (
+      state.classification &&
+      (row.information_classification || "") !== state.classification
+    )
+      return false;
+    if (!q) return true;
+    const haystack = Object.entries(row)
+      .filter(([, value]) => typeof value === "string")
+      .map(([, value]) => value)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+}
+
+function metadataConfidenceBand(row) {
+  if (!row.is_pii) return null;
+  const prob = Number(row.pii_probability || 0);
+  let level = "low";
+  if (prob >= 0.85 && !row.needs_review) level = "high";
+  else if (prob >= 0.6) level = "medium";
+  const cls =
+    level === "high" ? "danger" : level === "medium" ? "warn" : "muted";
+  return {
+    level,
+    label: CONFIDENCE_LABELS[level],
+    cls,
+    title:
+      "Confianza estimada a partir del nombre del elemento. " +
+      "Es orientativa y no sustituye la revisión humana.",
+  };
+}
+
 function renderMeta() {
-  const total = state.columns.length;
-  const pii = state.columns.filter((c) => c.is_pii).length;
-  const review = state.columns.filter((c) => c.needs_review).length;
+  const rows = currentRows();
+  const total = rows.length;
+  const pii = rows.filter((c) => c.is_pii).length;
+  const review = rows.filter((c) => c.needs_review).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
+  const unit = isMetadataMode() ? "filas" : "columnas";
   $("#resultsMeta").textContent =
-    `${total} columnas · ${pii} PII (${pct}%)` +
+    `${total} ${unit} · ${pii} PII (${pct}%)` +
     (review ? ` · ${review} requieren revisión` : "");
 }
 
 function renderKPIs() {
   const el = $("#kpiStrip");
+  const rows = currentRows();
+  const metadata = isMetadataMode();
+
+  if (metadata) {
+    if (!rows.length) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    const total = rows.length;
+    const pii = rows.filter((c) => c.is_pii).length;
+    const review = rows.filter((c) => c.needs_review).length;
+    const entities = new Set(
+      rows.filter((c) => c.is_pii && c.entity).map((c) => c.entity),
+    ).size;
+    const pct = total ? Math.round((pii / total) * 100) : 0;
+    const files = getFiles().length;
+    const top = topEntities(rows, 1)[0];
+    el.hidden = false;
+    el.innerHTML =
+      `<div class="kpi"><span class="kpi-label">Filas</span><span class="kpi-value">${total}</span></div>` +
+      `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
+      `<div class="kpi"><span class="kpi-label">Entidades</span><span class="kpi-value">${entities}</span></div>` +
+      `<div class="kpi"><span class="kpi-label">Requieren revisión</span><span class="kpi-value">${review}</span></div>` +
+      `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
+      `<div class="kpi"><span class="kpi-label">Entidad principal</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
+    return;
+  }
+
   if (!isIndexView()) {
     el.hidden = true;
     el.textContent = "";
     return;
   }
-  const total = state.columns.length;
-  const pii = state.columns.filter((c) => c.is_pii).length;
-  const review = state.columns.filter((c) => c.needs_review).length;
-  const empty = state.columns.filter(isEmptyContent).length;
-  const critical = state.columns.filter((c) =>
+  const total = rows.length;
+  const pii = rows.filter((c) => c.is_pii).length;
+  const review = rows.filter((c) => c.needs_review).length;
+  const empty = rows.filter(isEmptyContent).length;
+  const critical = rows.filter((c) =>
     ["confidential_pii", "sensitive_pii", "restricted"].includes(
       c.information_classification,
     ),
   ).length;
   const pct = total ? Math.round((pii / total) * 100) : 0;
   const files = getFiles().length;
-  const top = topEntities(state.columns, 1)[0];
+  const top = topEntities(rows, 1)[0];
   el.hidden = false;
   el.innerHTML =
     `<div class="kpi"><span class="kpi-label">Columnas</span><span class="kpi-value">${total}</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII</span><span class="kpi-value">${pii} (${pct}%)</span></div>` +
     `<div class="kpi"><span class="kpi-label">PII crítico</span><span class="kpi-value">${critical}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Requieren revisión</span><span class="kpi-value">${review}</span></div>` +
-    `<div class="kpi"><span class="kpi-label">Sin contenido</span><span class="kpi-value">${empty}</span></div>` +
+    (state.contentAnalysis
+      ? `<div class="kpi"><span class="kpi-label">Sin contenido</span><span class="kpi-value">${empty}</span></div>`
+      : "") +
     `<div class="kpi"><span class="kpi-label">Archivos</span><span class="kpi-value">${files}</span></div>` +
     `<div class="kpi"><span class="kpi-label">Entidad principal</span><span class="kpi-value">${escapeHtml(top ? `${top[0]} (${top[1]})` : "—")}</span></div>`;
 }
 
 function renderTabs() {
   const el = $("#fileTabs");
-  if (!isMulti() && !(state.columns.length && getFiles().length)) {
+  const rows = currentRows();
+  if (!isMulti() && !(rows.length && getFiles().length)) {
     el.hidden = true;
     el.textContent = "";
     return;
@@ -642,8 +909,8 @@ function renderTabs() {
     b.innerHTML = `<span class="tab-name">${escapeHtml(label)}</span> <span class="tab-badge">${escapeHtml(sub)}</span>`;
     return b;
   };
-  const totalPii = state.columns.filter((c) => c.is_pii).length;
-  el.append(mkTab(ALL, "Todos", `${state.columns.length}·${totalPii}`));
+  const totalPii = rows.filter((c) => c.is_pii).length;
+  el.append(mkTab(ALL, "Todos", `${rows.length}·${totalPii}`));
   for (const f of getFiles()) {
     const s = fileSummary(f);
     el.append(mkTab(f, f, `${s.total}·${s.pii}`));
@@ -677,9 +944,10 @@ function renderIndex() {
     card.className = "file-card";
     card.dataset.file = f;
     card.setAttribute("aria-label", `Consultar la tabla de ${f}`);
+    const unit = isMetadataMode() ? "filas" : "columnas";
     card.innerHTML =
       `<span class="file-card-name">${escapeHtml(f)}</span>` +
-      `<span class="file-card-meta">${s.total} columnas · ${s.pii} PII (${s.pct}%)</span>` +
+      `<span class="file-card-meta">${s.total} ${unit} · ${s.pii} PII (${s.pct}%)</span>` +
       `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>` +
       `<span class="file-card-top">Principales entidades: ${escapeHtml(topTxt)}</span>` +
       `<span class="file-card-cta">Consultar tabla →</span>`;
@@ -699,24 +967,25 @@ function renderFileHead() {
   const topTxt = s.top.length
     ? s.top.map(([e, n]) => `${e} (${n})`).join(", ")
     : "—";
+  const unit = isMetadataMode() ? "filas" : "columnas";
   el.hidden = false;
   el.innerHTML =
     `<button type="button" class="link-back" data-file="${ALL}">← Regresar a todos los archivos</button>` +
     `<div><strong>${escapeHtml(s.file)}</strong>` +
-    `<span class="file-card-meta"> · ${s.total} columnas · ${s.pii} PII (${s.pct}%) · Principales entidades: ${escapeHtml(topTxt)}</span></div>` +
+    `<span class="file-card-meta"> · ${s.total} ${unit} · ${s.pii} PII (${s.pct}%) · Principales entidades: ${escapeHtml(topTxt)}</span></div>` +
     `<span class="prob-track" aria-hidden="true"><span class="prob-fill" style="width:${s.pct}%"></span></span>`;
 }
 
 function renderGlobalFilter() {
   const row = $("#globalFilterRow");
   if (!row) return;
-  row.hidden = !(isMulti() && state.columns.length > 0);
+  row.hidden = !(isMulti() && currentRows().length > 0);
 }
 
 function renderFileFilters() {
   const row = $("#fileFilterRow");
   if (!row) return;
-  row.hidden = isIndexView() || state.columns.length === 0;
+  row.hidden = isIndexView() || currentRows().length === 0;
 }
 
 function renderEntityOptions() {
@@ -766,9 +1035,53 @@ function renderTable() {
   const selFile = $("#selExportFileFmt");
   const rowFile = $("#fileExportRow");
   const tableHead = $("#tableFileHead");
+  const metadataWrap = $("#metadataTableWrap");
   document.body.classList.toggle("show-audit", state.showAudit);
   const auditBox = $("#in-show-audit");
   if (auditBox) auditBox.checked = state.showAudit;
+
+  if (isMetadataMode()) {
+    if (wrap) wrap.hidden = true;
+    if (isIndexView()) {
+      if (metadataWrap) metadataWrap.hidden = true;
+      if (selFile) selFile.hidden = true;
+      if (rowFile) rowFile.hidden = true;
+      if (tableHead) {
+        tableHead.hidden = true;
+        tableHead.textContent = "";
+      }
+      info.textContent =
+        "Es necesario seleccionar un archivo para consultar su tabla completa.";
+      return;
+    }
+    if (metadataWrap) metadataWrap.hidden = false;
+    if (rowFile) rowFile.hidden = false;
+    const visible = visibleMetadataRows();
+    const inFile = isMulti() && state.activeFile !== ALL;
+    const total = inFile
+      ? fileSummary(state.activeFile).total
+      : state.metadataRows.length;
+    info.textContent = state.metadataRows.length
+      ? `Se muestran ${visible.length} de ${total} filas${inFile ? ` en ${state.activeFile}` : ""}.`
+      : "";
+    if (selFile) selFile.hidden = state.metadataRows.length === 0;
+    const nameEl = $("#fileExportName");
+    if (nameEl) {
+      nameEl.textContent = state.metadataRows.length
+        ? `Tabla: ${inFile ? state.activeFile : "metadata"} · ${visible.length} de ${total} filas visibles`
+        : "";
+    }
+    if (tableHead) {
+      tableHead.hidden = true;
+      tableHead.textContent = "";
+    }
+    renderMetadataTable();
+    return;
+  }
+
+  if (metadataWrap) metadataWrap.hidden = true;
+  if (wrap) wrap.hidden = false;
+
   // En índice Todos no hay tabla, solo cards.
   if (isIndexView()) {
     wrap.hidden = true;
@@ -831,19 +1144,27 @@ function renderTable() {
     const tr = document.createElement("tr");
     if (col.is_pii) tr.classList.add("pii-row");
     if (col.needs_review) tr.classList.add("needs-review");
-    if (isEmptyContent(col)) tr.classList.add("empty-content");
+    if (state.contentAnalysis && isEmptyContent(col))
+      tr.classList.add("empty-content");
     const ent = col.entity ?? "—";
     const entP =
       col.entity_probability === null || col.entity_probability === undefined
         ? "—"
         : pctText(col.entity_probability);
+    const reviewTitle = state.contentAnalysis
+      ? "Confianza baja o ausencia de contenido; requiere revisión humana"
+      : "Confianza baja o desacuerdo entre modelo y reglas; requiere revisión humana";
     const reviewCell = col.needs_review
-      ? `<span class="status-badge warn" title="Confianza baja o ausencia de contenido; requiere revisión humana">Revisar</span>`
+      ? `<span class="status-badge warn" title="${reviewTitle}">Revisar</span>`
       : `<span class="muted">—</span>`;
-    const sampleCell = isEmptyContent(col)
-      ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó únicamente en el nombre">Sin contenido</span>`
-      : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
-    const band = confidenceBand(col);
+    const sampleCell = !state.contentAnalysis
+      ? `<span class="muted">—</span>`
+      : isEmptyContent(col)
+        ? `<span class="status-badge muted" title="Sin filas: la clasificación se basó únicamente en el nombre">Sin contenido</span>`
+        : `<span class="prob-num">${Number(col.sample_size || 0)}</span>`;
+    const band = state.contentAnalysis
+      ? confidenceBand(col)
+      : nameOnlyConfidenceBand(col);
     const probCell = state.showAudit
       ? `<span class="prob-num">${pctText(col.pii_probability)}</span>`
       : band
@@ -871,25 +1192,279 @@ function renderTable() {
       `<td>${probCell}</td>` +
       `<td class="col-audit">${escapeHtml(entP)}</td>` +
       `<td class="col-audit" title="Fuente de la decisión: nombre, contenido o ambos">${escapeHtml(evidenceText(col))}</td>` +
-      `<td class="col-audit">${sampleCell}</td>`;
+      `<td class="col-audit content-only">${sampleCell}</td>`;
     tb.append(tr);
+  }
+}
+
+function metadataColumnNames() {
+  if (state.metadataOrder && state.metadataOrder.length) {
+    return state.metadataOrder;
+  }
+  const seen = new Set();
+  for (const row of state.metadataRows) {
+    for (const key of Object.keys(row)) {
+      if (
+        [
+          "source_file",
+          "source_index",
+          "row_index",
+          "element",
+          "evaluable",
+          "analysis_mode",
+          "content_analysis",
+          "model_version",
+          "classification_version",
+          "is_pii",
+          "pii_probability",
+          "entity",
+          "entity_probability",
+          "needs_review",
+          "evidence",
+          "source",
+          "score_binary",
+          "regex_entity",
+          "entity_top1",
+          "information_classification",
+          "information_classification_group",
+          "information_classification_label",
+          "classification_review",
+          "classification_reason",
+        ].includes(key)
+      ) {
+        continue;
+      }
+      seen.add(key);
+    }
+  }
+  return Array.from(seen);
+}
+
+function renderMetadataTable() {
+  const head = $("#metadataTableHead");
+  const body = $("#metadataTableBody");
+  if (!head || !body) return;
+  head.textContent = "";
+  body.textContent = "";
+
+  const metaCols = metadataColumnNames();
+  const audit = Boolean(state.showAudit);
+  const headerLabels = [
+    "Archivo",
+    ...metaCols,
+    "Elemento",
+    "PII",
+    "Entidad",
+    "Clasificación",
+    "Confianza",
+    "Revisión",
+  ];
+  if (audit) {
+    headerLabels.push(
+      "Prob. PII",
+      "Prob. Entidad",
+      "Evidencia",
+      "Fuente",
+      "Score nombre",
+      "Entidad regex",
+      "Entidad top1",
+    );
+  }
+
+  const headerRow = document.createElement("tr");
+  for (const label of headerLabels) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    headerRow.append(th);
+  }
+  head.append(headerRow);
+
+  const rows = visibleMetadataRows();
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = headerLabels.length;
+    td.textContent = state.metadataRows.length
+      ? "Ninguna fila coincide con los filtros aplicados"
+      : "Sin información analizada";
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    if (row.is_pii) tr.classList.add("pii-row");
+    if (row.needs_review) tr.classList.add("needs-review");
+
+    const fileTd = document.createElement("td");
+    fileTd.textContent = row.source_file || "";
+    tr.append(fileTd);
+
+    for (const column of metaCols) {
+      const td = document.createElement("td");
+      td.textContent = row[column] ?? "";
+      tr.append(td);
+    }
+
+    const elementTd = document.createElement("td");
+    if (row.evaluable === false || !row.element) {
+      elementTd.innerHTML =
+        '<span class="status-badge muted metadata-element-empty">Sin elemento</span>';
+    } else {
+      elementTd.innerHTML = `<strong>${escapeHtml(row.element)}</strong>`;
+    }
+    tr.append(elementTd);
+
+    const piiTd = document.createElement("td");
+    piiTd.innerHTML = `<span class="status-badge ${
+      row.is_pii ? "danger" : "success"
+    }">${row.is_pii ? "PII" : "NO PII"}</span>`;
+    tr.append(piiTd);
+
+    const entityTd = document.createElement("td");
+    entityTd.textContent = row.entity || "—";
+    tr.append(entityTd);
+
+    const clsKey = String(row.information_classification || "").replace(
+      /[^a-z_]/gi,
+      "",
+    );
+    const clsLabel = row.information_classification_label || "Sin clasificación";
+    const clsTd = document.createElement("td");
+    clsTd.innerHTML = clsKey
+      ? `<span class="status-badge info-class-${clsKey}">${escapeHtml(clsLabel)}</span>`
+      : '<span class="status-badge muted">Sin clasificación</span>';
+    tr.append(clsTd);
+
+    const band = metadataConfidenceBand(row);
+    const bandTd = document.createElement("td");
+    bandTd.innerHTML = band
+      ? `<span class="status-badge ${band.cls}" title="${escapeHtml(band.title)}">${band.label}</span>`
+      : '<span class="muted">—</span>';
+    tr.append(bandTd);
+
+    const reviewTd = document.createElement("td");
+    reviewTd.innerHTML = row.needs_review
+      ? '<span class="status-badge warn">Revisar</span>'
+      : '<span class="muted">—</span>';
+    tr.append(reviewTd);
+
+    if (audit) {
+      const probPiiTd = document.createElement("td");
+      probPiiTd.textContent = pctText(row.pii_probability);
+      tr.append(probPiiTd);
+
+      const probEntTd = document.createElement("td");
+      probEntTd.textContent =
+        row.entity_probability === null ||
+        row.entity_probability === undefined
+          ? "—"
+          : pctText(row.entity_probability);
+      tr.append(probEntTd);
+
+      const evidenceTd = document.createElement("td");
+      evidenceTd.textContent =
+        row.evidence === "name"
+          ? "Nombre"
+          : row.evidence === "sin_elemento"
+            ? "Sin elemento"
+            : row.evidence || "—";
+      tr.append(evidenceTd);
+
+      const sourceTd = document.createElement("td");
+      sourceTd.textContent = row.source || "—";
+      tr.append(sourceTd);
+
+      const scoreTd = document.createElement("td");
+      scoreTd.textContent = pctText(row.score_binary);
+      tr.append(scoreTd);
+
+      const regexTd = document.createElement("td");
+      regexTd.textContent = row.regex_entity || "—";
+      tr.append(regexTd);
+
+      const top1Td = document.createElement("td");
+      top1Td.textContent = row.entity_top1 || "—";
+      tr.append(top1Td);
+    }
+
+    body.append(tr);
+  }
+}
+
+function renderMetadataSelectors() {
+  const box = $("#metadataColumnSelectors");
+  if (!box) return;
+  box.textContent = "";
+
+  if (!isMetadataMode() || !state.metadataFiles.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+
+  for (const entry of state.metadataFiles) {
+    const row = document.createElement("div");
+    row.className = "metadata-column-row";
+
+    const label = document.createElement("label");
+    label.className = "field-label";
+    label.textContent = `Columna de metadata · ${entry.source_file}`;
+
+    const select = document.createElement("select");
+    select.className = "select mono";
+    select.dataset.index = String(entry.source_index);
+
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Seleccione una columna…";
+    select.append(blank);
+
+    for (const column of entry.columns || []) {
+      const option = document.createElement("option");
+      option.value = column;
+      option.textContent = column;
+      select.append(option);
+    }
+
+    select.value = state.metadataColumns[entry.source_index] || "";
+    select.disabled = state.inspectBusy;
+    select.addEventListener("change", (event) => {
+      state.metadataColumns[entry.source_index] = event.target.value;
+    });
+
+    row.append(label, select);
+    box.append(row);
+  }
+
+  if (state.inspectBusy) {
+    const note = document.createElement("p");
+    note.className = "field-note";
+    note.textContent = "Leyendo las columnas de los archivos seleccionados…";
+    box.append(note);
   }
 }
 
 function renderReport() {
   const art = $("#article-report");
   if (!art) return;
-  art.hidden = !(isMulti() && state.columns.length > 0);
+  const rows = currentRows();
+  art.hidden = !(isMulti() && rows.length > 0);
   if (art.hidden) return;
-  const total = state.columns.length;
-  const pii = state.columns.filter((c) => c.is_pii).length;
+  const total = rows.length;
+  const pii = rows.filter((c) => c.is_pii).length;
   const files = getFiles().length;
+  const unit = isMetadataMode() ? "filas" : "columnas";
   const sum = $("#reportSummary");
   if (sum)
-    sum.textContent = `${files} tablas · ${total} columnas · ${pii} PII → reporte_pii_global (CSV o Excel)`;
+    sum.textContent = `${files} tablas · ${total} ${unit} · ${pii} PII → reporte_pii_global (CSV o Excel)`;
 }
 
 function renderAll() {
+  applyModeVisibility();
+  renderMetadataSelectors();
   renderMeta();
   renderKPIs();
   renderTabs();
@@ -924,6 +1499,10 @@ function setBusy(b) {
   state.busy = b;
   $("#btnProcess").disabled = b;
   $("#btnProcess").textContent = b ? "Analizando…" : "Analizar PII";
+  const modeSelect = $("#in-analysis-mode");
+  if (modeSelect) modeSelect.disabled = b;
+  const contentBox = $("#in-content-analysis");
+  if (contentBox) contentBox.disabled = b || isMetadataMode();
   const sf = $("#selExportFileFmt");
   if (sf) sf.disabled = b;
   const sr = $("#selReportFmt");
@@ -986,15 +1565,31 @@ function removeUploadFile(idx) {
   });
   input.files = dt.files;
   updateFileHint();
+  if (isMetadataMode()) {
+    inspectMetadataFiles(Array.from(input.files)).catch((error) => {
+      showAlert(
+        error.message || "No fue posible leer las columnas de los archivos.",
+      );
+    });
+  } else {
+    state.metadataFiles = [];
+    state.metadataColumns = {};
+    renderMetadataSelectors();
+  }
 }
 
 function clearAll() {
   $("#pii-form").reset();
   updateFileHint();
   showAlert(null);
-  $("#note-file").textContent =
-    "Se analizan los nombres y el contenido de las columnas. La información permanece en el servidor.";
   state.columns = [];
+  state.metadataRows = [];
+  state.metadataOrder = [];
+  state.metadataFiles = [];
+  state.metadataColumns = {};
+  state.inspectBusy = false;
+  state.analysisMode = "columns";
+  state.contentAnalysis = state.defaultContentAnalysis;
   state.filter = "";
   state.onlyPii = false;
   state.onlyReview = false;
@@ -1005,6 +1600,8 @@ function clearAll() {
   state.classification = "";
   resetDeep();
   $("#in-filter").value = "";
+  const modeSelect = $("#in-analysis-mode");
+  if (modeSelect) modeSelect.value = "columns";
   setChecked("#in-only-pii", false);
   setChecked("#in-only-review", false);
   setChecked("#in-only-empty", false);
@@ -1019,6 +1616,70 @@ function clearAll() {
   $("#pagingInfo").textContent = "";
   renderAll();
   $("#datasetFile").focus();
+}
+
+function resetRunState() {
+  state.activeFile = ALL;
+  state.entity = "";
+  state.classification = "";
+  resetDeep();
+  $("#in-filter").value = "";
+  state.filter = "";
+  setChecked("#in-only-pii", false);
+  state.onlyPii = false;
+  setChecked("#in-only-review", false);
+  state.onlyReview = false;
+  setChecked("#in-only-empty", false);
+  state.onlyEmpty = false;
+}
+
+async function onSubmitMetadata(files) {
+  setBusy(true);
+  try {
+    await inspectMetadataFiles(files);
+    const mapping = {};
+    for (let index = 0; index < files.length; index += 1) {
+      const column =
+        state.metadataColumns[index] || state.metadataColumns[String(index)];
+      if (!column) {
+        throw new Error(
+          `Seleccione la columna de metadata para ${files[index].name}.`,
+        );
+      }
+      mapping[String(index)] = column;
+    }
+
+    const fd = new FormData();
+    files.forEach((file) => fd.append("file", file));
+    fd.append("metadata_columns", JSON.stringify(mapping));
+
+    const data = await apiMetadata(fd);
+    state.metadataRows = data.results || [];
+    state.metadataOrder = data.metadata_columns || [];
+    state.metadataFiles = data.files || state.metadataFiles;
+    state.columns = [];
+    resetRunState();
+    renderAll();
+
+    const pii = state.metadataRows.filter((row) => row.is_pii).length;
+    const nFiles = getFiles().length;
+    $("#upload-result").textContent =
+      nFiles > 1
+        ? `${nFiles} archivos · ${state.metadataRows.length} filas · ${pii} PII. Seleccione una tarjeta para consultar el detalle.`
+        : `${state.metadataRows.length} filas · ${pii} PII.`;
+
+    if (data.warnings && data.warnings.length) {
+      showAlert(data.warnings.join(" | "), "warn");
+    }
+  } catch (err) {
+    $("#upload-result").textContent = "";
+    showAlert(
+      err.message ||
+        "Se produjo un error no identificado al procesar la metadata.",
+    );
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function onSubmit(e) {
@@ -1040,27 +1701,27 @@ async function onSubmit(e) {
     );
     return;
   }
+
+  if (isMetadataMode()) {
+    await onSubmitMetadata(files);
+    return;
+  }
+
   const fd = new FormData();
   files.forEach((f) => fd.append("file", f));
+  fd.append("content_analysis", state.contentAnalysis ? "1" : "0");
   setBusy(true);
   try {
     const data = await apiProcess(fd);
     state.columns = data.columns_analysis || [];
-    state.activeFile = ALL;
-    state.entity = "";
-    state.classification = "";
-    resetDeep();
-    $("#in-filter").value = "";
-    state.filter = "";
-    setChecked("#in-only-pii", false);
-    state.onlyPii = false;
-    setChecked("#in-only-review", false);
-    state.onlyReview = false;
-    setChecked("#in-only-empty", false);
-    state.onlyEmpty = false;
+    state.metadataRows = [];
+    state.metadataOrder = [];
+    resetRunState();
     renderAll();
     const pii = state.columns.filter((c) => c.is_pii).length;
-    const nEmpty = state.columns.filter(isEmptyContent).length;
+    const nEmpty = state.contentAnalysis
+      ? state.columns.filter(isEmptyContent).length
+      : 0;
     const nFiles = getFiles().length;
     $("#upload-result").textContent =
       nFiles > 1
@@ -1157,11 +1818,79 @@ function triggerDownload(url, filename) {
   a.remove();
 }
 
-function downloadCsv(filename, cols) {
+function metadataExportHeader() {
+  const columns = metadataColumnNames();
+  const header = [
+    "Archivo",
+    ...columns,
+    "Elemento",
+    "Prediccion",
+    "Entidad",
+    "Clasificación",
+    "Requiere revision",
+  ];
+  if (!state.showAudit) return header;
+  return [
+    ...header,
+    "Probabilidad PII (%)",
+    "Probabilidad Entidad (%)",
+    "Evidencia",
+    "Fuente",
+    "Score nombre (%)",
+    "Entidad regex",
+    "Entidad top1",
+    "Evaluable",
+  ];
+}
+
+function buildMetadataExportRows(rows) {
+  const columns = metadataColumnNames();
+  return rows.map((row) => {
+    const base = [
+      row.source_file || "",
+      ...columns.map((column) => row[column] ?? ""),
+      row.element ?? "",
+      row.is_pii ? "PII" : "NO PII",
+      row.entity ?? "",
+      row.information_classification_label || "Sin clasificación",
+      row.needs_review ? "Si" : "No",
+    ];
+    if (!state.showAudit) return base;
+    return [
+      ...base,
+      (Number(row.pii_probability || 0) * 100).toFixed(2),
+      row.entity_probability === null || row.entity_probability === undefined
+        ? ""
+        : (Number(row.entity_probability) * 100).toFixed(2),
+      row.evidence === "name"
+        ? "Nombre"
+        : row.evidence === "sin_elemento"
+          ? "Sin elemento"
+          : row.evidence || "",
+      row.source || "",
+      (Number(row.score_binary || 0) * 100).toFixed(2),
+      row.regex_entity ?? "",
+      row.entity_top1 ?? "",
+      row.evaluable === false ? "No" : "Si",
+    ];
+  });
+}
+
+function exportPayload(rows) {
+  if (isMetadataMode()) {
+    return {
+      header: metadataExportHeader(),
+      rows: buildMetadataExportRows(rows),
+    };
+  }
+  return { header: exportHeader(), rows: buildExportRows(rows) };
+}
+
+function downloadCsvWith(filename, header, rows) {
   const blob = new Blob(
     [
       "\ufeff" +
-        [exportHeader(), ...buildExportRows(cols)].map(toCsvRow).join("\r\n"),
+        [header, ...rows].map(toCsvRow).join("\r\n"),
     ],
     { type: "text/csv;charset=utf-8;" },
   );
@@ -1170,15 +1899,11 @@ function downloadCsv(filename, cols) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadXlsx(filename, cols) {
+async function downloadXlsxWith(filename, header, rows) {
   const res = await fetch(apiUrl(API.export), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      filename,
-      header: exportHeader(),
-      rows: buildExportRows(cols),
-    }),
+    body: JSON.stringify({ filename, header, rows }),
   });
   if (!res.ok) {
     let msg = "";
@@ -1194,19 +1919,22 @@ async function downloadXlsx(filename, cols) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-async function downloadWithFormat(base, fmt, cols) {
+async function downloadWithFormat(base, fmt, rows) {
+  const payload = exportPayload(rows);
   if (fmt === "xlsx") {
     try {
-      await downloadXlsx(`${base}.xlsx`, cols);
+      await downloadXlsxWith(`${base}.xlsx`, payload.header, payload.rows);
     } catch (err) {
       showAlert(
         (err.message || "No fue posible generar el archivo XLSX.") +
           " Se descargará el formato CSV.",
         "warn",
       );
-      downloadCsv(`${base}.csv`, cols);
+      downloadCsvWith(`${base}.csv`, payload.header, payload.rows);
     }
-  } else downloadCsv(`${base}.csv`, cols);
+  } else {
+    downloadCsvWith(`${base}.csv`, payload.header, payload.rows);
+  }
 }
 
 function safeBase(name) {
@@ -1219,12 +1947,12 @@ function safeBase(name) {
 }
 
 function handleExportFile(fmt = "csv") {
-  if (!state.columns.length) {
+  if (!currentRows().length) {
     showAlert("Es necesario analizar al menos una tabla antes de exportar.");
     return;
   }
   if (isIndexView()) return;
-  const rows = visibleColumns();
+  const rows = isMetadataMode() ? visibleMetadataRows() : visibleColumns();
   if (!rows.length) {
     showAlert("No hay resultados que exportar con los filtros aplicados.", "warn");
     return;
@@ -1237,13 +1965,14 @@ function handleExportFile(fmt = "csv") {
 }
 
 function handleGenerateReport(fmt = "csv") {
-  if (!state.columns.length) {
+  const rows = currentRows();
+  if (!rows.length) {
     showAlert(
       "Es necesario analizar al menos una tabla antes de generar el reporte.",
     );
     return;
   }
-  downloadWithFormat("reporte_pii_global", fmt, state.columns);
+  downloadWithFormat("reporte_pii_global", fmt, rows);
 }
 
 function resetFileFilters() {
@@ -1270,7 +1999,66 @@ function setActiveFile(f) {
 function boot() {
   $("#pii-form").addEventListener("submit", onSubmit);
   $("#btn-clear").addEventListener("click", clearAll);
-  $("#datasetFile").addEventListener("change", updateFileHint);
+  $("#datasetFile").addEventListener("change", () => {
+    updateFileHint();
+    const input = $("#datasetFile");
+    const files = input.files ? Array.from(input.files) : [];
+    if (isMetadataMode()) {
+      inspectMetadataFiles(files).catch((error) => {
+        showAlert(
+          error.message || "No fue posible leer las columnas de los archivos.",
+        );
+      });
+    } else {
+      state.metadataFiles = [];
+      state.metadataColumns = {};
+      renderMetadataSelectors();
+    }
+  });
+
+  const modeSelect = $("#in-analysis-mode");
+  if (modeSelect) {
+    modeSelect.value = state.analysisMode;
+    modeSelect.addEventListener("change", (event) => {
+      state.analysisMode = event.target.value;
+      state.columns = [];
+      state.metadataRows = [];
+      state.metadataOrder = [];
+      state.metadataFiles = [];
+      state.metadataColumns = {};
+      state.activeFile = ALL;
+      resetFileFilters();
+      resetDeep();
+      applyModeVisibility();
+      renderAll();
+      const input = $("#datasetFile");
+      const files = input && input.files ? Array.from(input.files) : [];
+      if (isMetadataMode() && files.length) {
+        inspectMetadataFiles(files).catch((error) => {
+          showAlert(
+            error.message || "No fue posible leer las columnas de los archivos.",
+          );
+        });
+      }
+    });
+  }
+
+  const contentBox = $("#in-content-analysis");
+  if (contentBox) {
+    contentBox.addEventListener("change", (event) => {
+      if (isMetadataMode()) {
+        event.target.checked = false;
+        return;
+      }
+      state.contentAnalysis = event.target.checked;
+      if (!state.contentAnalysis) {
+        state.onlyEmpty = false;
+        setChecked("#in-only-empty", false);
+      }
+      applyModeVisibility();
+      renderAll();
+    });
+  }
   const fl = $("#fileList");
   if (fl)
     fl.addEventListener("click", (e) => {
@@ -1294,6 +2082,19 @@ function boot() {
     if (e.dataTransfer && e.dataTransfer.files.length) {
       $("#datasetFile").files = e.dataTransfer.files;
       updateFileHint();
+      const files = Array.from(e.dataTransfer.files);
+      if (isMetadataMode()) {
+        inspectMetadataFiles(files).catch((error) => {
+          showAlert(
+            error.message ||
+              "No fue posible leer las columnas de los archivos.",
+          );
+        });
+      } else {
+        state.metadataFiles = [];
+        state.metadataColumns = {};
+        renderMetadataSelectors();
+      }
     }
   });
   $("#in-filter").addEventListener("input", (e) => {

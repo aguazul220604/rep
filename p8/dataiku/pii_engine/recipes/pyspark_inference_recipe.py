@@ -5,9 +5,14 @@ Pegar este script en una receta PySpark de Dataiku. Requiere `pii_engine` en
 Project Libraries y los managed folders `model_binary_v1`, `model_entity_v1`
 y `model_content_v1`. Spark solo se usa para leer y muestrear; el análisis se
 ejecuta en el driver sobre una muestra acotada.
+
+Si el dataset es `FilesInFolder`, Spark no puede leerlo de forma distribuida y
+la receta cae automáticamente a la API de Dataiku. Para omitir el intento de
+Spark, usar `PREFER_SPARK = False`.
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, List, Optional
 
 import pandas as pd
@@ -37,7 +42,8 @@ ROW_MAX_ROWS: Optional[int] = 50_000
 SAMPLING_MODE = "random"
 SAMPLING_SEED = 42
 COLUMN_SAMPLE_SIZE = 1_000
-USE_EXACT_ROW_COUNT = True
+USE_EXACT_ROW_COUNT = False
+PREFER_SPARK = True
 
 NAME_COLUMN = "name"
 TABLE_COLUMN = "dataset"
@@ -142,32 +148,26 @@ def _results_to_dataframe(results: List[Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _metadata_to_dataframe(spark_df: Any, analyzer: Any) -> pd.DataFrame:
-    selected = [NAME_COLUMN]
-    if TABLE_COLUMN and TABLE_COLUMN in spark_df.columns:
-        selected.insert(0, TABLE_COLUMN)
-
-    limit = int(ROW_MAX_ROWS or 50_000)
-    frame = (
-        spark_df.select(*selected)
-        .dropna()
-        .distinct()
-        .limit(limit)
-        .toPandas()
-    )
-    if frame.empty:
+def _metadata_to_dataframe(frame: pd.DataFrame, analyzer: Any) -> pd.DataFrame:
+    if frame is None or frame.empty or NAME_COLUMN not in frame.columns:
         return pd.DataFrame(columns=METADATA_COLUMNS)
 
-    names = [str(value).strip() for value in frame[NAME_COLUMN].tolist()]
+    if TABLE_COLUMN and TABLE_COLUMN in frame.columns:
+        source = frame[[TABLE_COLUMN, NAME_COLUMN]].dropna().drop_duplicates()
+    else:
+        source = frame[[NAME_COLUMN]].dropna().drop_duplicates()
+        source[TABLE_COLUMN or "table"] = INPUT_DATASET
+
+    names = [str(value).strip() for value in source[NAME_COLUMN].tolist()]
     predictions = analyzer.predict(names)
     rows = []
-    for _, record in frame.iterrows():
+    for _, record in source.iterrows():
         name = str(record[NAME_COLUMN]).strip()
         prediction = predictions.get(name)
         if prediction is None:
             continue
         item = prediction.to_dict()
-        if TABLE_COLUMN and TABLE_COLUMN in frame.columns:
+        if TABLE_COLUMN and TABLE_COLUMN in source.columns:
             item["table"] = str(record[TABLE_COLUMN])
         else:
             item["table"] = INPUT_DATASET
@@ -191,23 +191,40 @@ def main() -> None:
     if not 0 < float(ROW_RATIO) <= 1:
         raise ValueError("ROW_RATIO debe estar en (0, 1]")
 
-    spark = SparkSession.builder.getOrCreate()
     input_dataset = dataiku.Dataset(INPUT_DATASET)
-    spark_df = dkuspark.get_dataframe(spark, input_dataset)
     adapter = _build_adapter()
 
     if mode == "metadata":
         analyzer = adapter.build_metadata_analyzer()
-        output_df = _metadata_to_dataframe(spark_df, analyzer)
+        output_df = _metadata_to_dataframe(input_dataset.get_dataframe(), analyzer)
     else:
-        sample_df = _sample_spark_dataframe(spark_df)
-        results = adapter.analyze_dataframe(
-            sample_df,
-            table_name=INPUT_DATASET,
-            sample_size=COLUMN_SAMPLE_SIZE,
-            seed=SAMPLING_SEED,
-            apply_row_sampling=False,
-        )
+        sample_df = None
+        if PREFER_SPARK:
+            try:
+                spark = SparkSession.builder.getOrCreate()
+                spark_df = dkuspark.get_dataframe(spark, input_dataset)
+                sample_df = _sample_spark_dataframe(spark_df)
+            except Exception as exc:
+                print(
+                    "Spark no disponible para este dataset (%s: %s)."
+                    % (type(exc).__name__, exc),
+                    file=sys.stderr,
+                )
+
+        if sample_df is None or sample_df.empty:
+            results = adapter.analyze_dataset(
+                INPUT_DATASET,
+                sample_size=COLUMN_SAMPLE_SIZE,
+                seed=SAMPLING_SEED,
+            )
+        else:
+            results = adapter.analyze_dataframe(
+                sample_df,
+                table_name=INPUT_DATASET,
+                sample_size=COLUMN_SAMPLE_SIZE,
+                seed=SAMPLING_SEED,
+                apply_row_sampling=False,
+            )
         output_df = _results_to_dataframe(results)
 
     dataiku.Dataset(OUTPUT_DATASET).write_with_schema(output_df)

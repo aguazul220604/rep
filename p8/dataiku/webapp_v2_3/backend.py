@@ -668,7 +668,11 @@ ENTITY_TO_INFORMATION_CLASSIFICATION = {
 CLASSIFICATION_REVIEW_ENTITIES = {"empresa", "contrato"}
 
 
-def _classify_information(data: Dict[str, Any]) -> Dict[str, Any]:
+def _classify_information(
+    data: Dict[str, Any],
+    *,
+    escalate_on_review: bool = True,
+) -> Dict[str, Any]:
     is_pii = bool(data.get("pii"))
     if not is_pii:
         return {
@@ -682,7 +686,7 @@ def _classify_information(data: Dict[str, Any]) -> Dict[str, Any]:
     entity = str(data.get("entity") or "").strip().lower()
     needs_review = bool(data.get("needs_review"))
 
-    if needs_review or entity == "otro_pii":
+    if (escalate_on_review and needs_review) or entity == "otro_pii":
         key = "confidential_pii"
         reason = "needs_review"
     elif entity in ENTITY_TO_INFORMATION_CLASSIFICATION:
@@ -782,6 +786,7 @@ def _metadata_row(
     source_file: str,
     source_index: Optional[int],
     row_index: int,
+    elem_column: str,
     element: str,
     metadata_values: Dict[str, Any],
     model_version: str,
@@ -824,6 +829,7 @@ def _metadata_row(
             "source_file": source_file,
             "source_index": source_index,
             "row_index": row_index,
+            "elem_column": elem_column,
             "element": element,
             "evaluable": evaluable,
             "analysis_mode": "metadata",
@@ -842,7 +848,7 @@ def _metadata_row(
             "entity_top1": entity_top1,
         }
     )
-    row.update(_classify_information(data))
+    row.update(_classify_information(data, escalate_on_review=False))
     return row
 
 
@@ -953,6 +959,7 @@ def inspect_columns():
 
 
 METADATA_RESULT_COLUMNS = [
+    "elem_column",
     "element",
     "is_pii",
     "entity",
@@ -1118,6 +1125,7 @@ def process_metadata():
                     item["source_file"],
                     item["source_index"],
                     row_index,
+                    elem_column,
                     element,
                     metadata_values,
                     model_version,

@@ -2183,6 +2183,11 @@ body.show-audit .is-basic-only {
 .metadata-element-empty {
   color: var(--ink-soft);
 }
+.metadata-analyzed-cell {
+  background: var(--paper-inset);
+  font-weight: 780;
+  box-shadow: inset 3px 0 0 var(--c-rojo);
+}
 body.name-only .content-only {
   display: none !important;
 }

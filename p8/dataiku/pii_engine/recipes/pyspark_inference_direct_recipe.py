@@ -13,6 +13,7 @@ permiten identificar la etapa exacta que falla en el log del job.
 """
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -23,9 +24,20 @@ import pandas as pd
 import dataiku
 from dataiku import spark as dkuspark
 from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    BooleanType,
+    DoubleType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 INPUT_DATASET = "data_test_final_2_copy"
 OUTPUT_DATASET = "pii_results_test"
+
+INPUT_DATASET = os.environ.get("DKU_INPUT_0_DATASET_ID", INPUT_DATASET)
+OUTPUT_DATASET = os.environ.get("DKU_OUTPUT_0_DATASET_ID", OUTPUT_DATASET)
 
 BINARY_MODEL_FOLDER = "model_binary_v1"
 ENTITY_MODEL_FOLDER = "model_entity_v1"
@@ -50,6 +62,7 @@ CHUNK_SIZE = 50_000
 
 CONVERT_MODE = "collect"
 DISABLE_ARROW = True
+OUTPUT_WRITER = "auto"
 
 RESULT_COLUMNS = [
     "table",
@@ -68,6 +81,30 @@ RESULT_COLUMNS = [
     "config_version",
     "schema_version",
 ]
+
+RESULT_SPARK_SCHEMA = StructType(
+    [
+        StructField("table", StringType(), True),
+        StructField("column", StringType(), True),
+        StructField("pii", BooleanType(), True),
+        StructField("prob_pii", DoubleType(), True),
+        StructField("entity", StringType(), True),
+        StructField("prob_entity", DoubleType(), True),
+        StructField("evidence", StringType(), True),
+        StructField("match_rate", DoubleType(), True),
+        StructField("sample_size", LongType(), True),
+        StructField("needs_review", BooleanType(), True),
+        StructField("classification", LongType(), True),
+        StructField("engine_version", StringType(), True),
+        StructField("model_version", StringType(), True),
+        StructField("config_version", StringType(), True),
+        StructField("schema_version", StringType(), True),
+    ]
+)
+
+_BOOL_RESULT_COLUMNS = {"pii", "needs_review"}
+_FLOAT_RESULT_COLUMNS = {"prob_pii", "prob_entity", "match_rate"}
+_INT_RESULT_COLUMNS = {"sample_size", "classification"}
 
 
 def _log(message: str) -> None:
@@ -176,6 +213,75 @@ def _to_pandas(spark: Any, spark_df: Any) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=list(spark_df.columns))
     return pd.DataFrame([row.asDict() for row in rows])
+
+
+def _normalize_output_dataframe(output_df: pd.DataFrame) -> pd.DataFrame:
+    frame = output_df.reindex(columns=RESULT_COLUMNS).copy()
+    for col in RESULT_COLUMNS:
+        if col in _BOOL_RESULT_COLUMNS:
+            frame[col] = frame[col].map(
+                lambda value: bool(value)
+                if value is not None and not pd.isna(value)
+                else False
+            ).astype(bool)
+        elif col in _FLOAT_RESULT_COLUMNS:
+            frame[col] = (
+                pd.to_numeric(frame[col], errors="coerce")
+                .fillna(0.0)
+                .astype(float)
+            )
+        elif col in _INT_RESULT_COLUMNS:
+            frame[col] = (
+                pd.to_numeric(frame[col], errors="coerce")
+                .fillna(0)
+                .astype("int64")
+            )
+        else:
+            frame[col] = frame[col].where(frame[col].notna(), "").astype(str)
+    return frame
+
+
+def _to_spark_output(spark: Any, frame: pd.DataFrame) -> Any:
+    rows = []
+    for record in frame.to_dict("records"):
+        row = []
+        for col in RESULT_COLUMNS:
+            value = record[col]
+            if col in _BOOL_RESULT_COLUMNS:
+                row.append(bool(value))
+            elif col in _FLOAT_RESULT_COLUMNS:
+                row.append(float(value))
+            elif col in _INT_RESULT_COLUMNS:
+                row.append(int(value))
+            else:
+                row.append(str(value))
+        rows.append(tuple(row))
+    return spark.createDataFrame(rows, schema=RESULT_SPARK_SCHEMA)
+
+
+def _write_output(spark: Any, output_df: pd.DataFrame) -> None:
+    writer = str(OUTPUT_WRITER).strip().lower()
+    if writer not in {"auto", "spark", "pandas"}:
+        raise ValueError("OUTPUT_WRITER debe ser 'auto', 'spark' o 'pandas'")
+
+    output_dataset = dataiku.Dataset(OUTPUT_DATASET)
+    frame = _normalize_output_dataframe(output_df)
+
+    if writer == "pandas" or spark is None:
+        output_dataset.write_with_schema(frame)
+        return
+
+    try:
+        spark_output = _to_spark_output(spark, frame)
+        dkuspark.write_with_schema(output_dataset, spark_output)
+    except Exception as exc:
+        if writer != "auto":
+            raise
+        _log(
+            "escritura Spark fallo (%s: %s); usando pandas"
+            % (type(exc).__name__, exc)
+        )
+        output_dataset.write_with_schema(frame)
 
 
 def _extract_record_count(payload: Any) -> Optional[int]:
@@ -306,7 +412,9 @@ def main() -> None:
     else:
         output_df = output_df.reindex(columns=RESULT_COLUMNS)
 
-    dataiku.Dataset(OUTPUT_DATASET).write_with_schema(output_df)
+    _log("output shape: %s" % (output_df.shape,))
+    _log("output dtypes:\n%s" % output_df.dtypes.to_string())
+    _write_output(spark, output_df)
     _log("written: %d" % len(output_df))
 
 
